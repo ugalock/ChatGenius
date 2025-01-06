@@ -9,7 +9,14 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Setup authentication
+// Debug middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  log(`[REQUEST] ${req.method} ${req.path}`);
+  next();
+});
+
+// Setup authentication first
 setupAuth(app);
 
 // Logging middleware
@@ -44,23 +51,35 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const server = registerRoutes(app);
+  try {
+    // Register routes and get server instance
+    const server = registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    log(`Error: ${err.message}`);
-    res.status(status).json({ message });
-  });
+    // Error handling middleware must be after route registration
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+      log(`[ERROR] ${status}: ${message}`);
+      res.status(status).json({ message });
+      // Re-throw error for logging
+      throw err;
+    });
 
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+    // Setup Vite or static serving last to not interfere with API routes
+    if (app.get("env") === "development") {
+      await setupVite(app, server);
+    } else {
+      serveStatic(app);
+    }
+
+    // ALWAYS serve the app on port 5000
+    // this serves both the API and the client
+    const PORT = 5000;
+    server.listen(PORT, "0.0.0.0", () => {
+      log(`serving on port ${PORT}`);
+    });
+  } catch (error) {
+    log(`[FATAL] Server failed to start: ${error}`);
+    process.exit(1);
   }
-
-  const PORT = 5000;
-  server.listen(PORT, "0.0.0.0", () => {
-    log(`Server running on port ${PORT}`);
-  });
 })();
