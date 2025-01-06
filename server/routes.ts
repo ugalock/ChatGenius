@@ -1,13 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth } from "./auth";
 import { setupWebSocket } from "./ws";
 import { db } from "@db";
 import { channels, messages, channelMembers, directMessages, users } from "@db/schema";
 import { eq, and, or, desc } from "drizzle-orm";
 
 export function registerRoutes(app: Express): Server {
-  setupAuth(app);  // Make sure auth is set up before other routes
   const httpServer = createServer(app);
   const ws = setupWebSocket(httpServer);
 

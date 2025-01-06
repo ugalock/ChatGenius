@@ -5,7 +5,7 @@ import session from "express-session";
 import createMemoryStore from "memorystore";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
-import { users, type User } from "@db/schema";
+import { users, type SelectUser, insertUserSchema } from "@db/schema";
 import { db } from "@db";
 import { eq } from "drizzle-orm";
 
@@ -30,7 +30,7 @@ const crypto = {
 
 declare global {
   namespace Express {
-    interface User extends User {}
+    interface User extends SelectUser {}
   }
 }
 
@@ -43,6 +43,7 @@ export function setupAuth(app: Express) {
     cookie: {
       maxAge: 86400000, // 24 hours
       httpOnly: true,
+      secure: false, // Will be set to true in production
       sameSite: 'lax'
     },
     store: new MemoryStore({
@@ -52,17 +53,15 @@ export function setupAuth(app: Express) {
 
   if (app.get("env") === "production") {
     app.set("trust proxy", 1);
-    sessionSettings.cookie = {
-      ...sessionSettings.cookie,
-      secure: true,
-    };
+    sessionSettings.cookie!.secure = true;
   }
 
+  // Setup session middleware before passport
   app.use(session(sessionSettings));
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Add debug middleware
+  // Debug middleware
   app.use((req, res, next) => {
     console.log(`[AUTH] ${req.method} ${req.path} - isAuthenticated: ${req.isAuthenticated()}`);
     next();
@@ -82,11 +81,13 @@ export function setupAuth(app: Express) {
           console.log("[AUTH] User not found:", username);
           return done(null, false, { message: "Incorrect username." });
         }
+
         const isMatch = await crypto.compare(password, user.password);
         if (!isMatch) {
           console.log("[AUTH] Password mismatch for user:", username);
           return done(null, false, { message: "Incorrect password." });
         }
+
         console.log("[AUTH] Login successful for user:", username);
         return done(null, user);
       } catch (err) {
@@ -109,6 +110,11 @@ export function setupAuth(app: Express) {
         .from(users)
         .where(eq(users.id, id))
         .limit(1);
+
+      if (!user) {
+        return done(null, false);
+      }
+
       done(null, user);
     } catch (err) {
       console.error("[AUTH] Deserialization error:", err);
@@ -118,7 +124,12 @@ export function setupAuth(app: Express) {
 
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { username, password } = req.body;
+      const result = insertUserSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).send("Invalid input: " + result.error.issues.map(i => i.message).join(", "));
+      }
+
+      const { username, password } = result.data;
       console.log("[AUTH] Registration attempt for user:", username);
 
       const [existingUser] = await db
@@ -151,7 +162,7 @@ export function setupAuth(app: Express) {
         }
         return res.json({
           message: "Registration successful",
-          user: { id: newUser.id, username: newUser.username },
+          user: { id: newUser.id, username: newUser.username }
         });
       });
     } catch (error) {
@@ -161,6 +172,11 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/login", (req, res, next) => {
+    const result = insertUserSchema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).send("Invalid input: " + result.error.issues.map(i => i.message).join(", "));
+    }
+
     passport.authenticate("local", async (err: any, user: Express.User, info: IVerifyOptions) => {
       if (err) {
         console.error("[AUTH] Login error:", err);
@@ -186,7 +202,7 @@ export function setupAuth(app: Express) {
         console.log("[AUTH] Login successful for user:", user.username);
         return res.json({
           message: "Login successful",
-          user: { id: user.id, username: user.username },
+          user: { id: user.id, username: user.username }
         });
       });
     })(req, res, next);
@@ -213,7 +229,7 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", (req, res) => {
     console.log("[AUTH] User check - isAuthenticated:", req.isAuthenticated());
-    if (req.isAuthenticated()) {
+    if (req.isAuthenticated() && req.user) {
       return res.json(req.user);
     }
     res.status(401).send("Not logged in");

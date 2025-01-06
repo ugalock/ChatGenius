@@ -1,5 +1,6 @@
 import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { z } from "zod";
 import { relations } from "drizzle-orm";
 
 export const users = pgTable("users", {
@@ -25,7 +26,7 @@ export const messages = pgTable("messages", {
   content: text("content").notNull(),
   userId: integer("user_id").references(() => users.id).notNull(),
   channelId: integer("channel_id").references(() => channels.id),
-  threadId: integer("thread_id").references(() => messages.id),
+  threadId: integer("thread_id"),
   attachments: jsonb("attachments"),
   reactions: jsonb("reactions"),
   createdAt: timestamp("created_at").defaultNow()
@@ -65,6 +66,7 @@ export const channelsRelations = relations(channels, ({ many, one }) => ({
   })
 }));
 
+// Handle thread relationship properly through relations
 export const messagesRelations = relations(messages, ({ one, many }) => ({
   user: one(users, {
     fields: [messages.userId],
@@ -74,15 +76,21 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
     fields: [messages.channelId],
     references: [channels.id]
   }),
-  thread: one(messages, {
+  parentThread: one(messages, {
     fields: [messages.threadId],
     references: [messages.id]
   }),
-  replies: many(messages, { relationName: "thread" })
+  replies: many(messages)
 }));
 
-// Schemas
-export const insertUserSchema = createInsertSchema(users);
+// Schemas with proper validation
+export const insertUserSchema = createInsertSchema(users, {
+  username: z.string().min(3).max(50),
+  password: z.string().min(6),
+  status: z.string().optional(),
+  avatar: z.string().optional()
+});
+
 export const selectUserSchema = createSelectSchema(users);
 export const insertChannelSchema = createInsertSchema(channels);
 export const selectChannelSchema = createSelectSchema(channels);
@@ -91,6 +99,8 @@ export const selectMessageSchema = createSelectSchema(messages);
 
 // Types
 export type User = typeof users.$inferSelect;
+export type InsertUser = typeof users.$inferInsert;
+export type SelectUser = typeof users.$inferSelect;
 export type Channel = typeof channels.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type DirectMessage = typeof directMessages.$inferSelect;
