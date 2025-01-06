@@ -16,12 +16,14 @@ export function setupWebSocket(server: Server) {
     server,
     handleProtocols: (protocols, req) => {
       // Allow Vite HMR connections
-      if (protocols.has('vite-hmr')) {
+      const protocolArray = protocols ? (Array.isArray(protocols) ? protocols : [protocols]) : [];
+      if (protocolArray.includes('vite-hmr')) {
         return 'vite-hmr';
       }
-      return '';
+      return protocolArray.length > 0 ? protocolArray[0] : '';
     }
   });
+
   const clients = new Map<number, ExtendedWebSocket>();
 
   wss.on("connection", (ws: ExtendedWebSocket, req) => {
@@ -30,9 +32,10 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    ws.on("message", async (data: string) => {
+    ws.on("message", (data) => {
       try {
-        const message: WSMessage = JSON.parse(data);
+        // Ensure proper UTF-8 decoding
+        const message = JSON.parse(data.toString('utf-8')) as WSMessage;
 
         switch (message.type) {
           case "auth":
@@ -63,6 +66,13 @@ export function setupWebSocket(server: Server) {
         }
       } catch (error) {
         console.error("WebSocket message error:", error);
+        // Send error back to client
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "error",
+            payload: { message: "Invalid message format" }
+          }));
+        }
       }
     });
 
@@ -75,13 +85,24 @@ export function setupWebSocket(server: Server) {
         });
       }
     });
+
+    // Send initial connection success message
+    ws.send(JSON.stringify({
+      type: "connected",
+      payload: { message: "Connected to server" }
+    }));
   });
 
   function broadcast(message: WSMessage, exclude?: number) {
     const data = JSON.stringify(message);
     clients.forEach((client, userId) => {
       if (userId !== exclude && client.readyState === WebSocket.OPEN) {
-        client.send(data);
+        try {
+          client.send(data);
+        } catch (error) {
+          console.error(`Failed to send message to client ${userId}:`, error);
+          clients.delete(userId);
+        }
       }
     });
   }

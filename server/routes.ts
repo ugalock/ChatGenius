@@ -7,7 +7,7 @@ import { channels, messages, channelMembers, directMessages, users } from "@db/s
 import { eq, and, or, desc } from "drizzle-orm";
 
 export function registerRoutes(app: Express): Server {
-  setupAuth(app);
+  setupAuth(app);  // Make sure auth is set up before other routes
   const httpServer = createServer(app);
   const ws = setupWebSocket(httpServer);
 
