@@ -53,10 +53,10 @@ export const sessionSettings: session.SessionOptions = {
   name: "chat.sid",
   cookie: {
     httpOnly: true,
-    secure: true, // Enable for HTTPS
+    secure: process.env.NODE_ENV === "production", // Only force HTTPS in production
     maxAge: 86400000 * 30, // 30 days
     path: "/",
-    sameSite: "none", // Allow cross-site cookies
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Use lax in development
   },
   store: sessionStore,
   saveUninitialized: false, // Don't create session until something stored
