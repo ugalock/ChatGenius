@@ -15,7 +15,8 @@ export function useWebSocket(userId: number | undefined) {
       const host = window.location.host;
 
       // Create WebSocket URL with userId as a query parameter for authentication
-      const wsUrl = `${protocol}//${host}/ws?userId=${userId}`;
+      const { token } = useUser.getState();
+      const wsUrl = `${protocol}//${host}/ws?token=${token}`;
       console.log('[WS] Connecting to:', wsUrl);
 
       // Create WebSocket

@@ -20,8 +20,18 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
   const queryClient = useQueryClient();
   const form = useForm<{ name: string; description: string }>();
 
+  const { token } = useUser();
   const { data: channels } = useQuery<Channel[]>({
-    queryKey: ["/api/channels"]
+    queryKey: ["/api/channels"],
+    queryFn: async () => {
+      const response = await fetch("/api/channels", {
+        headers: { 
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error("Failed to fetch channels");
+      return response.json();
+    }
   });
 
   const createChannel = useMutation({
