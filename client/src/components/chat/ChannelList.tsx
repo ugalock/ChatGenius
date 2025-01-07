@@ -1,11 +1,17 @@
-
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Hash, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useUser } from "@/hooks/use-user";
 import { useForm } from "react-hook-form";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Channel } from "@db/schema";
@@ -15,7 +21,10 @@ type Props = {
   onSelectChannel: (channelId: number) => void;
 };
 
-export default function ChannelList({ selectedChannelId, onSelectChannel }: Props) {
+export default function ChannelList({
+  selectedChannelId,
+  onSelectChannel,
+}: Props) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const form = useForm<{ name: string; description: string }>();
@@ -25,13 +34,13 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
     queryKey: ["/api/channels"],
     queryFn: async () => {
       const response = await fetch("/api/channels", {
-        headers: { 
-          Authorization: `Bearer ${token}`
-        }
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
       if (!response.ok) throw new Error("Failed to fetch channels");
       return response.json();
-    }
+    },
   });
 
   const createChannel = useMutation({
@@ -40,7 +49,7 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
-        credentials: "include"
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -53,7 +62,7 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
       queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
       setOpen(false);
       form.reset();
-    }
+    },
   });
 
   return (
@@ -72,7 +81,9 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
                 <DialogTitle>Create Channel</DialogTitle>
               </DialogHeader>
               <form
-                onSubmit={form.handleSubmit((data) => createChannel.mutate(data))}
+                onSubmit={form.handleSubmit((data) =>
+                  createChannel.mutate(data),
+                )}
                 className="space-y-4"
               >
                 <div className="space-y-2">
@@ -84,10 +95,7 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="description">Description</Label>
-                  <Input
-                    id="description"
-                    {...form.register("description")}
-                  />
+                  <Input id="description" {...form.register("description")} />
                 </div>
                 <Button type="submit">Create</Button>
               </form>

@@ -9,7 +9,9 @@ import { useUser } from "@/hooks/use-user";
 
 export default function ChatPage() {
   const { user } = useUser();
-  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(
+    null,
+  );
   useWebSocket(user?.id);
 
   return (
