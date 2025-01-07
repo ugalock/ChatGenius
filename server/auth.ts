@@ -23,7 +23,7 @@ const crypto = {
     const suppliedPasswordBuf = (await scryptAsync(
       suppliedPassword,
       salt,
-      64
+      64,
     )) as Buffer;
     return timingSafeEqual(hashedPasswordBuf, suppliedPasswordBuf);
   },
@@ -38,25 +38,39 @@ declare global {
 // Create session store that can be exported
 const MemoryStore = createMemoryStore(session);
 export const sessionStore = new MemoryStore({
-  checkPeriod: 86400000, // prune expired entries every 24h
-  ttl: 86400000 * 7, // 7 days
+  checkPeriod: 86400000 * 7, // prune expired entries every 7 days
+  ttl: 86400000 * 7, // 7 days,
+  noDisposeOnSet: true // Prevent session disposal on set operations
+});
+
+// Track session store operations for debugging
+sessionStore.on('set', (sid) => {
+  log(`[AUTH] Session stored: ${sid}`);
+});
+
+sessionStore.on('get', (sid) => {
+  log(`[AUTH] Session retrieved: ${sid}`);
+});
+
+sessionStore.on('destroy', (sid) => {
+  log(`[AUTH] Session destroyed: ${sid}`);
 });
 
 // Export session settings for use in WebSocket
 export const sessionSettings: session.SessionOptions = {
   secret: process.env.REPL_ID || "chat-genius-secret",
-  resave: false,
-  saveUninitialized: false,
+  resave: true,
+  saveUninitialized: true,
   cookie: {
     maxAge: 86400000 * 7, // 7 days
     httpOnly: true,
-    secure: false, // Set to false in development
-    sameSite: 'lax', // Changed from 'none' to 'lax' for better cookie persistence
-    path: '/'
+    secure: false, // Will be set to true in production
+    path: '/',
+    sameSite: 'lax'
   },
   store: sessionStore,
-  name: 'chat.sid',
-  rolling: true // Refresh cookie on each request
+  name: "chat.sid",
+  rolling: true
 };
 
 export function setupAuth(app: Express) {
@@ -66,14 +80,39 @@ export function setupAuth(app: Express) {
     sessionSettings.cookie!.secure = true;
   }
 
-  // Setup session middleware before passport
-  app.use(session(sessionSettings));
+  // Add session middleware with detailed logging
+  const sessionMiddleware = session(sessionSettings);
+  app.use((req, res, next) => {
+    log(`[AUTH] Request start - Headers: ${JSON.stringify(req.headers)}`);
+    sessionMiddleware(req, res, () => {
+      log(`[AUTH] Session created/restored - ID: ${req.sessionID}`);
+      next();
+    });
+  });
+
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Add logging middleware to track session and auth state
+  // Debug middleware to track session lifecycle
   app.use((req, res, next) => {
-    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, Cookie: ${req.headers.cookie}`);
+    const prevSession = req.session;
+    const prevSessionID = req.sessionID;
+
+    log(
+      `[AUTH] Request start - Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, Cookie: ${req.headers.cookie}`,
+    );
+
+    // Track session changes during request
+    res.on('finish', () => {
+      if (prevSession !== req.session) {
+        log(`[AUTH] Session object changed during request. Old ID: ${prevSessionID}, New ID: ${req.sessionID}`);
+      }
+      if (prevSessionID !== req.sessionID) {
+        log(`[AUTH] Session ID changed during request. Old: ${prevSessionID}, New: ${req.sessionID}`);
+      }
+      log(`[AUTH] Request end - Final Session ID: ${req.sessionID}`);
+    });
+
     next();
   });
 
@@ -109,7 +148,7 @@ export function setupAuth(app: Express) {
         log(`[AUTH] Login error: ${err}`);
         return done(err);
       }
-    })
+    }),
   );
 
   passport.serializeUser((user, done) => {
@@ -139,41 +178,47 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: Express.User, info: IVerifyOptions) => {
-      if (err) {
-        log(`[AUTH] Login error: ${err}`);
-        return next(err);
-      }
-
-      if (!user) {
-        log(`[AUTH] Login failed: ${info.message}`);
-        return res.status(400).send(info.message ?? "Login failed");
-      }
-
-      req.login(user, async (err) => {
+    passport.authenticate(
+      "local",
+      (err: any, user: Express.User, info: IVerifyOptions) => {
         if (err) {
-          log(`[AUTH] Login session creation failed: ${err}`);
+          log(`[AUTH] Login error: ${err}`);
           return next(err);
         }
 
-        log(`[AUTH] Login successful: ${user.username}`);
-        return res.json({
-          message: "Login successful",
-          user: { id: user.id, username: user.username }
+        if (!user) {
+          log(`[AUTH] Login failed: ${info.message}`);
+          return res.status(400).send(info.message ?? "Login failed");
+        }
+
+        req.login(user, async (err) => {
+          if (err) {
+            log(`[AUTH] Login session creation failed: ${err}`);
+            return next(err);
+          }
+
+          log(`[AUTH] Login successful: ${user.username}`);
+          return res.json({
+            message: "Login successful",
+            user: { id: user.id, username: user.username },
+          });
         });
-      });
-    })(req, res, next);
+      },
+    )(req, res, next);
   });
 
   app.post("/api/register", async (req, res, next) => {
     try {
       const result = insertUserSchema.safeParse(req.body);
       if (!result.success) {
-        log(`[AUTH] Registration validation failed: ${result.error.issues.map(i => i.message).join(", ")}`);
+        log(
+          `[AUTH] Registration validation failed: ${result.error.issues.map((i) => i.message).join(", ")}`,
+        );
         return res
           .status(400)
           .send(
-            "Invalid input: " + result.error.issues.map(i => i.message).join(", ")
+            "Invalid input: " +
+              result.error.issues.map((i) => i.message).join(", "),
           );
       }
 
@@ -195,7 +240,7 @@ export function setupAuth(app: Express) {
         .values({
           username,
           password: hashedPassword,
-          status: "online"
+          status: "online",
         })
         .returning();
 
@@ -207,7 +252,7 @@ export function setupAuth(app: Express) {
         }
         return res.json({
           message: "Registration successful",
-          user: { id: newUser.id, username: newUser.username }
+          user: { id: newUser.id, username: newUser.username },
         });
       });
     } catch (error) {
