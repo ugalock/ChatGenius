@@ -40,7 +40,7 @@ export const sessionStore = new MemoryStore({
   checkPeriod: 86400000, // Prune expired entries every 24h
   ttl: 86400000 * 30, // 30 days
   stale: false, // Delete expired sessions
-  max: 1000, // Maximum number of sessions to store
+  max: 1000000, // Maximum number of sessions to store
   dispose: function (key) {
     log(`[AUTH] Session disposed: ${key}`);
   },
@@ -57,7 +57,9 @@ export const sessionSettings: session.SessionOptions = {
     maxAge: 86400000 * 30, // 30 days
     path: "/",
     sameSite: "none", // Allow cross-site cookies
-    domain: process.env.REPL_SLUG ? `.${process.env.REPL_SLUG}.repl.co` : undefined,
+    domain: process.env.REPL_SLUG
+      ? `.${process.env.REPL_SLUG}.repl.co`
+      : undefined,
   },
   store: sessionStore,
   saveUninitialized: false, // Don't create session until something stored
