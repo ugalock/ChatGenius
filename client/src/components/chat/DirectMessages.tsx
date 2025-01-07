@@ -6,6 +6,10 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useUser } from "@/hooks/use-user";
 import type { User } from "@db/schema";
 
+type ExtendedUser = User & {
+  unreadCount: number;
+};
+
 type Props = {
   selectedUserId: number | null;
   onSelectUser: (userId: number) => void;
@@ -14,7 +18,7 @@ type Props = {
 export default function DirectMessages({ selectedUserId, onSelectUser }: Props) {
   const { token, user: currentUser } = useUser();
 
-  const { data: users } = useQuery<User[]>({
+  const { data: users } = useQuery<ExtendedUser[]>({
     queryKey: ["/api/users"],
     queryFn: async () => {
       const response = await fetch("/api/users", {
@@ -58,8 +62,12 @@ export default function DirectMessages({ selectedUserId, onSelectUser }: Props) 
                 </div>
                 <span className="truncate">{user.username}</span>
               </div>
-              {/* TODO: Add unread message count once backend supports it */}
               <div className="flex items-center space-x-2">
+                {user.unreadCount > 0 && (
+                  <span className="bg-blue-500 rounded-full px-2 py-0.5 text-xs">
+                    {user.unreadCount}
+                  </span>
+                )}
                 <MessageCircle className="h-4 w-4" />
               </div>
             </Button>

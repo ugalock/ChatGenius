@@ -13,6 +13,7 @@ import {
 import { eq, and, or, desc } from "drizzle-orm";
 import { log } from "./vite";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 
 // Channel creation validation schema
 const createChannelSchema = z.object({
@@ -234,8 +235,31 @@ export function registerRoutes(app: Express): Server {
   // Users
   app.get("/api/users", async (req, res) => {
     try {
+      // First get all users
       const allUsers = await db.select().from(users);
-      res.json(allUsers);
+
+      // Then get unread message counts for the current user
+      const unreadCounts = await db
+        .select({
+          fromUserId: directMessages.fromUserId,
+          unreadCount: sql<number>`cast(count(*) as integer)`,
+        })
+        .from(directMessages)
+        .where(
+          and(
+            eq(directMessages.toUserId, req.user!.id),
+            eq(directMessages.isRead, false)
+          )
+        )
+        .groupBy(directMessages.fromUserId);
+
+      // Map the unread counts to users
+      const usersWithUnread = allUsers.map(user => ({
+        ...user,
+        unreadCount: unreadCounts.find(count => count.fromUserId === user.id)?.unreadCount || 0
+      }));
+
+      res.json(usersWithUnread);
     } catch (error) {
       log(`[ERROR] Failed to fetch users: ${error}`);
       res.status(500).json({ message: "Failed to fetch users" });
