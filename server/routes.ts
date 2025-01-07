@@ -98,10 +98,7 @@ export function registerRoutes(app: Express): Server {
       });
 
       // Notify other users about the new channel
-      ws.broadcast({
-        type: "channel_created",
-        payload: channel,
-      });
+      ws.broadcast("channel_created", channel);
 
       res.status(201).json(channel);
     } catch (error) {
@@ -128,7 +125,15 @@ export function registerRoutes(app: Express): Server {
           .limit(50);
 
         res.json(
-          channelMessages.map(({ message, user }) => ({ ...message, user })),
+          channelMessages.map(({ message, user }) => ({
+            ...message,
+            user: {
+              id: user.id,
+              username: user.username,
+              avatar: user.avatar,
+              status: user.status
+            }
+          })),
         );
       } catch (error) {
         log(`[ERROR] Failed to fetch messages: ${error}`);
@@ -164,13 +169,16 @@ export function registerRoutes(app: Express): Server {
 
         const fullMessage = {
           ...messageWithUser.message,
-          user: messageWithUser.user,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status
+          }
         };
 
-        ws.broadcast({
-          type: "message",
-          payload: fullMessage,
-        });
+        // Send message through WebSocket
+        ws.broadcast("message", fullMessage);
 
         res.json(fullMessage);
       } catch (error) {
@@ -220,10 +228,8 @@ export function registerRoutes(app: Express): Server {
         })
         .returning();
 
-      ws.broadcast({
-        type: "direct_message",
-        payload: message,
-      });
+      // Send direct message through WebSocket
+      ws.broadcast("direct_message", message);
 
       res.json(message);
     } catch (error) {
