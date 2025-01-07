@@ -69,7 +69,7 @@ export function setupAuth(app: Express) {
 
   // Add logging middleware to track session and auth state
   app.use((req, res, next) => {
-    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}`);
+    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, User: ${req.user?.id || 'none'}`);
     next();
   });
 
@@ -140,9 +140,11 @@ export function setupAuth(app: Express) {
       const result = insertUserSchema.safeParse(req.body);
       if (!result.success) {
         log(`[AUTH] Registration validation failed: ${result.error.issues.map(i => i.message).join(", ")}`);
-        return res.status(400).send(
-          "Invalid input: " + result.error.issues.map(i => i.message).join(", ")
-        );
+        return res
+          .status(400)
+          .send(
+            "Invalid input: " + result.error.issues.map(i => i.message).join(", ")
+          );
       }
 
       const { username, password } = result.data;

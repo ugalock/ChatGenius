@@ -17,7 +17,7 @@ export function setupWebSocket(server: Server) {
     path: '/ws',
     handleProtocols: (protocols, request) => {
       // Handle Vite HMR protocol
-      if (protocols && protocols.includes('vite-hmr')) {
+      if (protocols && Array.from(protocols).includes('vite-hmr')) {
         log('[WS] Accepting Vite HMR connection');
         return 'vite-hmr';
       }

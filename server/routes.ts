@@ -1,17 +1,27 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupWebSocket } from "./ws";
 import { db } from "@db";
 import { channels, messages, channelMembers, directMessages, users } from "@db/schema";
 import { eq, and, or, desc } from "drizzle-orm";
+import { log } from "./vite";
+import { z } from "zod";
 
 // Middleware to check authentication
-function requireAuth(req: Express.Request, res: Express.Response, next: Function) {
+function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
+    log(`[ERROR] Unauthorized access attempt`);
     return res.status(401).json({ message: "Unauthorized" });
   }
   next();
 }
+
+// Channel creation validation schema
+const createChannelSchema = z.object({
+  name: z.string().min(1, "Channel name is required"),
+  description: z.string().optional(),
+  isPrivate: z.boolean().default(false)
+});
 
 export function registerRoutes(app: Express): Server {
   const httpServer = createServer(app);
@@ -36,39 +46,60 @@ export function registerRoutes(app: Express): Server {
 
       res.json(userChannels);
     } catch (error) {
+      log(`[ERROR] Failed to fetch channels: ${error}`);
       res.status(500).json({ message: "Failed to fetch channels" });
     }
   });
 
   app.post("/api/channels", requireAuth, async (req, res) => {
     try {
-      const { name, description, isPrivate } = req.body;
+      // Validate request body
+      const result = createChannelSchema.safeParse(req.body);
+      if (!result.success) {
+        log(`[ERROR] Channel creation validation failed: ${result.error.issues.map(i => i.message).join(", ")}`);
+        return res.status(400).json({ 
+          message: "Invalid input", 
+          errors: result.error.issues.map(i => i.message)
+        });
+      }
+
+      const { name, description, isPrivate } = result.data;
+      log(`[INFO] Creating channel "${name}" for user ${req.user!.id}`);
 
       // Start a transaction to ensure both operations succeed or fail together
-      const result = await db.transaction(async (tx) => {
+      const channel = await db.transaction(async (tx) => {
         // Create the channel
-        const [channel] = await tx
+        const [newChannel] = await tx
           .insert(channels)
           .values({
             name,
             description,
-            isPrivate: isPrivate || false,
+            isPrivate,
             createdById: req.user!.id
           })
           .returning();
 
+        log(`[INFO] Channel created with ID ${newChannel.id}`);
+
         // Add the creator as a channel member
         await tx.insert(channelMembers).values({
-          channelId: channel.id,
+          channelId: newChannel.id,
           userId: req.user!.id
         });
 
-        return channel;
+        log(`[INFO] Added creator as channel member`);
+        return newChannel;
       });
 
-      res.json(result);
+      // Notify other users about the new channel
+      ws.broadcast({
+        type: "channel_created",
+        payload: channel
+      });
+
+      res.status(201).json(channel);
     } catch (error) {
-      console.error("Error creating channel:", error);
+      log(`[ERROR] Failed to create channel: ${error}`);
       res.status(500).json({ message: "Failed to create channel" });
     }
   });
@@ -89,6 +120,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json(channelMessages.map(({ message, user }) => ({ ...message, user })));
     } catch (error) {
+      log(`[ERROR] Failed to fetch messages: ${error}`);
       res.status(500).json({ message: "Failed to fetch messages" });
     }
   });
@@ -124,6 +156,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json(fullMessage);
     } catch (error) {
+      log(`[ERROR] Failed to post message: ${error}`);
       res.status(500).json({ message: "Failed to post message" });
     }
   });
@@ -151,6 +184,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json(dms);
     } catch (error) {
+      log(`[ERROR] Failed to fetch direct messages: ${error}`);
       res.status(500).json({ message: "Failed to fetch direct messages" });
     }
   });
@@ -174,6 +208,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json(message);
     } catch (error) {
+      log(`[ERROR] Failed to post direct message: ${error}`);
       res.status(500).json({ message: "Failed to post direct message" });
     }
   });
@@ -184,6 +219,7 @@ export function registerRoutes(app: Express): Server {
       const allUsers = await db.select().from(users);
       res.json(allUsers);
     } catch (error) {
+      log(`[ERROR] Failed to fetch users: ${error}`);
       res.status(500).json({ message: "Failed to fetch users" });
     }
   });
