@@ -81,7 +81,12 @@ export function registerRoutes(app: Express): Server {
       log(`[API] Fetching all channels`);
       const allChannels = await db
         .select({
-          channel: channels,
+          id: channels.id,
+          name: channels.name,
+          description: channels.description,
+          isPrivate: channels.isPrivate,
+          createdAt: channels.createdAt,
+          createdById: channels.createdById,
           isMember: sql<boolean>`EXISTS (
             SELECT 1 FROM ${channelMembers}
             WHERE ${channelMembers.channelId} = ${channels.id}
@@ -91,13 +96,10 @@ export function registerRoutes(app: Express): Server {
         .from(channels)
         .orderBy(desc(channels.createdAt));
 
-      res.json(allChannels.map(({ channel, isMember }) => ({
-        ...channel,
-        isMember,
-      })));
+      res.json(allChannels);
     } catch (error) {
       log(`[ERROR] Failed to fetch all channels: ${error}`);
-      res.status(500).json({ message: "Failed to fetch all channels" });
+      res.status(500).json({ message: "Failed to fetch channels" });
     }
   });
 

@@ -18,7 +18,7 @@ import type { Channel } from "@db/schema";
 
 type ExtendedChannel = Channel & {
   isMember: boolean;
-  unread?: number;
+  unreadCount?: number;
 };
 
 type Props = {
@@ -33,8 +33,8 @@ export default function ChannelList({
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const form = useForm<{ name: string; description: string }>();
-
   const { token } = useUser();
+
   const { data: channels } = useQuery<ExtendedChannel[]>({
     queryKey: ["/api/channels/all"],
     queryFn: async () => {
@@ -77,12 +77,12 @@ export default function ChannelList({
     <div className="p-4 border-b border-gray-700">
       <h2 className="mb-2 text-gray-400 uppercase text-sm">Channels</h2>
       <ScrollArea className="flex-1">
-        <div className="space-y-1 items-left">
+        <div className="space-y-1">
           {channels?.map((channel) => (
             <Button
               key={channel.id}
               variant={channel.id === selectedChannelId ? "ghost" : "ghost"}
-              className={`flex items-center mb-2 cursor-pointer hover:bg-gray-700 rounded w-full justify-between ${
+              className={`w-full flex items-center mb-2 cursor-pointer hover:bg-gray-700 rounded justify-between ${
                 !channel.isMember ? "font-bold" : ""
               }`}
               onClick={() => onSelectChannel(channel.id)}
@@ -91,9 +91,9 @@ export default function ChannelList({
                 <MessageCircle className="h-4 w-4 mr-2" />
                 <span className="truncate">{channel.name}</span>
               </div>
-              {channel.unread && channel.unread > 0 && (
+              {channel.unreadCount && channel.unreadCount > 0 && (
                 <span className="bg-blue-500 rounded-full px-2 py-0.5 text-xs">
-                  {channel.unread}
+                  {channel.unreadCount}
                 </span>
               )}
             </Button>
