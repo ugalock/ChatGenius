@@ -41,7 +41,7 @@ export const sessionStore = new MemoryStore({
   ttl: 86400000 * 30, // 30 days
   stale: false, // Delete expired sessions
   max: 1000, // Maximum number of sessions to store
-  dispose: function(key) {
+  dispose: function (key) {
     log(`[AUTH] Session disposed: ${key}`);
   },
   noDisposeOnSet: true,
@@ -55,15 +55,15 @@ export const sessionSettings: session.SessionOptions = {
     httpOnly: true,
     secure: false, // Will be set to true in production
     maxAge: 86400000 * 30, // 30 days
-    path: '/',
-    sameSite: 'lax'
+    path: "/",
+    sameSite: "lax",
   },
   store: sessionStore,
   saveUninitialized: false, // Don't create session until something stored
   resave: false, // Don't save session if unmodified
-  unset: 'destroy', // Remove session from store when .destroy() is called
+  unset: "destroy", // Remove session from store when .destroy() is called
   rolling: true, // Force a new session identifier and reset expiration on every response
-  proxy: true // Trust the reverse proxy
+  proxy: true, // Trust the reverse proxy
 };
 
 export function setupAuth(app: Express) {
@@ -88,7 +88,7 @@ export function setupAuth(app: Express) {
     log(`[AUTH] Cookie Header: ${req.headers.cookie}`);
 
     // Ensure proper cookie handling
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader("Access-Control-Allow-Credentials", "true");
 
     // Save session before sending response
     if (req.session) {
@@ -220,10 +220,7 @@ export function setupAuth(app: Express) {
         }
 
         // Update user status to online
-        await db
-          .update(users)
-          .set({ status: 'online' })
-          .where(eq(users.id, user.id));
+        db.update(users).set({ status: "online" }).where(eq(users.id, user.id));
 
         req.login(user, (err) => {
           if (err) {
