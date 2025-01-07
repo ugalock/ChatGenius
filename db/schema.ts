@@ -46,6 +46,7 @@ export const directMessages = pgTable("direct_messages", {
   toUserId: integer("to_user_id").references(() => users.id).notNull(),
   attachments: jsonb("attachments"),
   reactions: jsonb("reactions"),
+  isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow()
 });
 
