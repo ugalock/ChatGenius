@@ -6,24 +6,42 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUser } from "@/hooks/use-user";
 import { useToast } from "@/hooks/use-toast";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
-type FormData = {
-  username: string;
-  password: string;
-};
+const authSchema = z.object({
+  username: z.string().min(3, "Username must be at least 3 characters"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+type FormData = z.infer<typeof authSchema>;
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
-  const { login, register } = useUser();
+  const { login, register: signUp } = useUser();
   const { toast } = useToast();
-  const form = useForm<FormData>();
+  const form = useForm<FormData>({
+    resolver: zodResolver(authSchema),
+    defaultValues: {
+      username: "",
+      password: ""
+    }
+  });
 
   const onSubmit = async (data: FormData) => {
     try {
       if (isLogin) {
         await login(data);
+        toast({
+          title: "Success",
+          description: "Successfully logged in",
+        });
       } else {
-        await register(data);
+        await signUp(data);
+        toast({
+          title: "Success",
+          description: "Account created and logged in",
+        });
       }
     } catch (error) {
       toast({
@@ -48,18 +66,28 @@ export default function AuthPage() {
               <Label htmlFor="username">Username</Label>
               <Input
                 id="username"
-                {...form.register("username", { required: true })}
+                {...form.register("username")}
               />
+              {form.formState.errors.username && (
+                <p className="text-sm text-red-500">
+                  {form.formState.errors.username.message}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
                 type="password"
-                {...form.register("password", { required: true })}
+                {...form.register("password")}
               />
+              {form.formState.errors.password && (
+                <p className="text-sm text-red-500">
+                  {form.formState.errors.password.message}
+                </p>
+              )}
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
               {isLogin ? "Login" : "Register"}
             </Button>
             <Button

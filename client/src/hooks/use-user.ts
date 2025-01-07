@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { User } from "@db/schema";
 
 type LoginData = {
@@ -46,10 +46,10 @@ export function useUser() {
         throw new Error(await response.text());
       }
 
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      const result = await response.json();
+      // Update the user data in the cache immediately
+      queryClient.setQueryData(["/api/user"], result.user);
+      return result;
     }
   });
 
@@ -66,10 +66,10 @@ export function useUser() {
         throw new Error(await response.text());
       }
 
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      const result = await response.json();
+      // Update the user data in the cache immediately
+      queryClient.setQueryData(["/api/user"], result.user);
+      return result;
     }
   });
 
@@ -87,7 +87,7 @@ export function useUser() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      // Clear the user data from the cache immediately
       queryClient.setQueryData(["/api/user"], null);
     }
   });

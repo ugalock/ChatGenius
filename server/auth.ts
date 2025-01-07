@@ -50,7 +50,7 @@ export function setupAuth(app: Express) {
     store: new MemoryStore({
       checkPeriod: 86400000, // prune expired entries every 24h
     }),
-    name: 'chat.sid' // Custom session cookie name
+    name: 'chat.sid'
   };
 
   if (app.get("env") === "production") {
@@ -80,6 +80,12 @@ export function setupAuth(app: Express) {
         if (!isMatch) {
           return done(null, false, { message: "Incorrect password." });
         }
+
+        // Update user status to online
+        await db
+          .update(users)
+          .set({ status: "online" })
+          .where(eq(users.id, user.id));
 
         return done(null, user);
       } catch (err) {
@@ -140,6 +146,7 @@ export function setupAuth(app: Express) {
         })
         .returning();
 
+      // Log the user in after registration
       req.login(newUser, (err) => {
         if (err) {
           return next(err);
@@ -155,7 +162,7 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", async (err: any, user: Express.User, info: IVerifyOptions) => {
+    passport.authenticate("local", (err: any, user: Express.User, info: IVerifyOptions) => {
       if (err) {
         return next(err);
       }
@@ -164,28 +171,15 @@ export function setupAuth(app: Express) {
         return res.status(400).send(info.message ?? "Login failed");
       }
 
-      req.logIn(user, async (err) => {
+      req.login(user, async (err) => {
         if (err) {
           return next(err);
         }
 
-        try {
-          await db
-            .update(users)
-            .set({ status: "online" })
-            .where(eq(users.id, user.id));
-
-          return res.json({
-            message: "Login successful",
-            user: { id: user.id, username: user.username }
-          });
-        } catch (error) {
-          // Still return success even if status update fails
-          return res.json({
-            message: "Login successful",
-            user: { id: user.id, username: user.username }
-          });
-        }
+        return res.json({
+          message: "Login successful",
+          user: { id: user.id, username: user.username }
+        });
       });
     })(req, res, next);
   });
