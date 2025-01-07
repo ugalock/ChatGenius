@@ -55,6 +55,26 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // Get single channel
+  app.get("/api/channels/:channelId", requireAuth, async (req, res) => {
+    try {
+      const [channel] = await db
+        .select()
+        .from(channels)
+        .where(eq(channels.id, parseInt(req.params.channelId)))
+        .limit(1);
+
+      if (!channel) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+
+      res.json(channel);
+    } catch (error) {
+      log(`[ERROR] Failed to fetch channel: ${error}`);
+      res.status(500).json({ message: "Failed to fetch channel" });
+    }
+  });
+
   app.post("/api/channels", async (req, res) => {
     try {
       // Validate request body
@@ -97,8 +117,11 @@ export function registerRoutes(app: Express): Server {
         return newChannel;
       });
 
-      // Notify other users about the new channel
-      ws.broadcast("channel_created", channel);
+      // Notify other users about the new channel creation
+      ws.broadcast({
+        type: "channel_created",
+        payload: { channel }
+      });
 
       res.status(201).json(channel);
     } catch (error) {
@@ -177,8 +200,11 @@ export function registerRoutes(app: Express): Server {
           }
         };
 
-        // Send message through WebSocket
-        ws.broadcast("message", fullMessage);
+        // Send message through WebSocket with proper typing
+        ws.broadcast({
+          type: "message",
+          payload: fullMessage
+        });
 
         res.json(fullMessage);
       } catch (error) {
@@ -191,9 +217,13 @@ export function registerRoutes(app: Express): Server {
   // Direct Messages
   app.get("/api/dm/:userId", requireAuth, async (req, res) => {
     try {
-      const dms = await db
-        .select()
+      const messages = await db
+        .select({
+          message: directMessages,
+          user: users,
+        })
         .from(directMessages)
+        .innerJoin(users, eq(directMessages.fromUserId, users.id))
         .where(
           or(
             and(
@@ -209,7 +239,17 @@ export function registerRoutes(app: Express): Server {
         .orderBy(desc(directMessages.createdAt))
         .limit(50);
 
-      res.json(dms);
+      res.json(
+        messages.map(({ message, user }) => ({
+          ...message,
+          user: {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            status: user.status
+          }
+        }))
+      );
     } catch (error) {
       log(`[ERROR] Failed to fetch direct messages: ${error}`);
       res.status(500).json({ message: "Failed to fetch direct messages" });
@@ -228,10 +268,33 @@ export function registerRoutes(app: Express): Server {
         })
         .returning();
 
-      // Send direct message through WebSocket
-      ws.broadcast("direct_message", message);
+      const [messageWithUser] = await db
+        .select({
+          message: directMessages,
+          user: users,
+        })
+        .from(directMessages)
+        .innerJoin(users, eq(directMessages.fromUserId, users.id))
+        .where(eq(directMessages.id, message.id))
+        .limit(1);
 
-      res.json(message);
+      const fullMessage = {
+        ...messageWithUser.message,
+        user: {
+          id: messageWithUser.user.id,
+          username: messageWithUser.user.username,
+          avatar: messageWithUser.user.avatar,
+          status: messageWithUser.user.status
+        }
+      };
+
+      // Send direct message through WebSocket
+      ws.broadcast({
+        type: "direct_message",
+        payload: fullMessage
+      });
+
+      res.json(fullMessage);
     } catch (error) {
       log(`[ERROR] Failed to post direct message: ${error}`);
       res.status(500).json({ message: "Failed to post direct message" });
@@ -269,6 +332,28 @@ export function registerRoutes(app: Express): Server {
     } catch (error) {
       log(`[ERROR] Failed to fetch users: ${error}`);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Get single user
+  app.get("/api/users/:userId", requireAuth, async (req, res) => {
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, parseInt(req.params.userId)))
+        .limit(1);
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Don't send password hash
+      const { password, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      log(`[ERROR] Failed to fetch user: ${error}`);
+      res.status(500).json({ message: "Failed to fetch user" });
     }
   });
 

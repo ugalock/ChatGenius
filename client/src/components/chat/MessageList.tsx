@@ -6,7 +6,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { formatDistance } from "date-fns";
 import { Search, Users, File } from "lucide-react";
-import type { Message, User, DirectMessage } from "@db/schema";
+import type { Message, User, DirectMessage, Channel } from "@db/schema";
 import MessageInput from "./MessageInput";
 
 // Extend the base message types to include the user
@@ -29,6 +29,7 @@ export default function MessageList({ channelId, userId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user: currentUser, token } = useUser();
 
+  // Query for messages
   const { data: messages } = useQuery<ExtendedMessage[]>({
     queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
     queryFn: async () => {
@@ -44,6 +45,7 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!(channelId || userId),
   });
 
+  // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({
     queryKey: ["/api/users", userId],
     queryFn: async () => {
@@ -56,6 +58,21 @@ export default function MessageList({ channelId, userId }: Props) {
       return response.json();
     },
     enabled: !!userId,
+  });
+
+  // Query for channel information
+  const { data: channel } = useQuery<Channel>({
+    queryKey: ["/api/channels", channelId],
+    queryFn: async () => {
+      const response = await fetch(`/api/channels/${channelId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch channel");
+      return response.json();
+    },
+    enabled: !!channelId,
   });
 
   useEffect(() => {
@@ -81,11 +98,8 @@ export default function MessageList({ channelId, userId }: Props) {
     if (userId && chatPartner) {
       return chatPartner.username;
     }
-    if (channelId && messages && messages.length > 0) {
-      const firstMessage = messages[0];
-      if (isChannelMessage(firstMessage)) {
-        return `# ${firstMessage.channelId}`;
-      }
+    if (channelId && channel) {
+      return `# ${channel.name}`;
     }
     return userId ? "Direct Message" : "# channel";
   };
@@ -99,12 +113,19 @@ export default function MessageList({ channelId, userId }: Props) {
       <div className="bg-white border-b p-4 flex items-center justify-between">
         <div className="flex items-center">
           {userId && chatPartner && (
-            <Avatar className="h-8 w-8 mr-2">
-              <AvatarImage src={chatPartner.avatar || undefined} />
-              <AvatarFallback>
-                {chatPartner.username[0].toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
+            <div className="relative">
+              <Avatar className="h-8 w-8 mr-2">
+                <AvatarImage src={chatPartner.avatar || undefined} />
+                <AvatarFallback>
+                  {chatPartner.username[0].toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div
+                className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
+                  chatPartner.status === "online" ? "bg-green-500" : "bg-gray-500"
+                }`}
+              />
+            </div>
           )}
           <div>
             <h2 className="text-xl font-semibold">{getMessageTitle()}</h2>

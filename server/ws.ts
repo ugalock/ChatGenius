@@ -14,6 +14,7 @@ interface ExtendedWebSocket extends WebSocket {
 
 type WSMessageType =
   | "typing"
+  | "typing_dm"
   | "message"
   | "direct_message"
   | "connected"
@@ -30,6 +31,8 @@ interface WSMessage {
     message?: string;
     content?: string;
     status?: string;
+    channel?: any;
+    user?: any;
     [key: string]: any;
   };
 }
@@ -82,7 +85,8 @@ export function setupWebSocket(server: Server) {
           log(`[WS] Client ${ws.userId} failed heartbeat, terminating`);
           db.update(users)
             .set({ status: "offline" })
-            .where(eq(users.id, ws.userId));
+            .where(eq(users.id, ws.userId))
+            .execute();
           clients.delete(ws.userId);
         }
         return ws.terminate();
@@ -125,11 +129,17 @@ export function setupWebSocket(server: Server) {
 
     clients.set(userId, ws);
 
+    // Set user as online
+    await db.update(users)
+      .set({ status: "online" })
+      .where(eq(users.id, userId))
+      .execute();
+
     // Send initial connection success
     try {
       ws.send(
         JSON.stringify({
-          type: "connected",
+          type: "connected" as WSMessageType,
           payload: { userId, message: "Connected to server" },
         }),
       );
@@ -156,16 +166,17 @@ export function setupWebSocket(server: Server) {
         if (message.type === "auth_check") {
           ws.send(
             JSON.stringify({
-              type: "connected",
+              type: "connected" as WSMessageType,
               payload: {
                 userId: ws.userId,
                 message: "Authentication successful",
               },
             }),
           );
-          db.update(users)
-            .set({ status: "online" })
-            .where(eq(users.id, ws.userId));
+          broadcast({
+            type: "presence",
+            payload: { userId: ws.userId, status: "online" },
+          });
           return;
         }
 
@@ -175,7 +186,7 @@ export function setupWebSocket(server: Server) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(
             JSON.stringify({
-              type: "error",
+              type: "error" as WSMessageType,
               payload: {
                 message:
                   error instanceof Error
@@ -197,7 +208,8 @@ export function setupWebSocket(server: Server) {
         log(`[WS] User ${ws.userId} disconnected`);
         db.update(users)
           .set({ status: "offline" })
-          .where(eq(users.id, ws.userId));
+          .where(eq(users.id, ws.userId))
+          .execute();
         clients.delete(ws.userId);
         broadcast({
           type: "presence",
@@ -211,10 +223,10 @@ export function setupWebSocket(server: Server) {
     clearInterval(interval);
   });
 
-  function broadcast(message: WSMessage, exclude?: number) {
+  function broadcast(message: WSMessage) {
     const data = JSON.stringify(message);
     clients.forEach((client, userId) => {
-      if (userId !== exclude && client.readyState === WebSocket.OPEN) {
+      if (client.readyState === WebSocket.OPEN) {
         try {
           client.send(data);
         } catch (error) {
