@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
@@ -39,15 +39,18 @@ export const channelMembers = pgTable("channel_members", {
   createdAt: timestamp("created_at").defaultNow()
 });
 
-// New table for tracking unread messages
+// New table for tracking unread messages with proper unique constraint
 export const channelUnreads = pgTable("channel_unreads", {
   id: serial("id").primaryKey(),
   channelId: integer("channel_id").references(() => channels.id).notNull(),
   userId: integer("user_id").references(() => users.id).notNull(),
   lastReadMessageId: integer("last_read_message_id").references(() => messages.id),
   unreadCount: integer("unread_count").default(0).notNull(),
-  updatedAt: timestamp("updated_at").defaultNow()
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  // Add unique constraint on channelId and userId
+  channelUserUnique: unique().on(table.channelId, table.userId)
+}));
 
 export const directMessages = pgTable("direct_messages", {
   id: serial("id").primaryKey(),
@@ -79,7 +82,6 @@ export const channelsRelations = relations(channels, ({ many, one }) => ({
   })
 }));
 
-// Handle thread relationship properly through relations
 export const messagesRelations = relations(messages, ({ one, many }) => ({
   user: one(users, {
     fields: [messages.userId],
@@ -97,7 +99,6 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
   unreadTracking: many(channelUnreads, { relationName: 'lastReadMessage' })
 }));
 
-// Add relations for channel unreads
 export const channelUnreadsRelations = relations(channelUnreads, ({ one }) => ({
   channel: one(channels, {
     fields: [channelUnreads.channelId],

@@ -121,13 +121,13 @@ export function registerRoutes(app: Express): Server {
       if (!channel) {
         return res.status(404).json({ message: "Channel not found" });
       }
-      await db
-        .insert(channelMembers)
-        .values({
-          channelId: parseInt(req.params.channelId),
-          userId: req.user!.id,
-        })
-        .onConflictDoNothing();
+      // await db
+      //   .insert(channelMembers)
+      //   .values({
+      //     channelId: parseInt(req.params.channelId),
+      //     userId: req.user!.id,
+      //   })
+      //   .onConflictDoNothing();
       res.json(channel);
     } catch (error) {
       log(`[ERROR] Failed to fetch channel: ${error}`);
@@ -463,7 +463,7 @@ export function registerRoutes(app: Express): Server {
         .delete(channelMembers)
         .where(eq(channelMembers.id, parseInt(req.params.id)))
         .execute();
-      
+
       res.json({ message: "Channel member deleted successfully" });
     } catch (error) {
       log(`[ERROR] Failed to delete channel member: ${error}`);
