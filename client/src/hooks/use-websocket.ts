@@ -10,11 +10,11 @@ export function useWebSocket(userId: number | undefined) {
 
     // Use the same host and port as the main application
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const websocket = new WebSocket(`${protocol}//${window.location.host}`);
+    const websocket = new WebSocket(`${protocol}//${window.location.host}/ws`);
     ws.current = websocket;
 
     websocket.onopen = () => {
-      console.log('WebSocket connected');
+      console.log('[WS] WebSocket connected');
       websocket.send(JSON.stringify({
         type: "auth",
         payload: { userId }
@@ -22,29 +22,36 @@ export function useWebSocket(userId: number | undefined) {
     };
 
     websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.error('[WS] WebSocket error:', error);
     };
 
     websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('WebSocket message received:', data);
+      try {
+        const data = JSON.parse(event.data);
+        console.log('[WS] WebSocket message received:', data);
 
-      switch (data.type) {
-        case "message":
-          queryClient.invalidateQueries({
-            queryKey: ["/api/channels", data.payload.channelId, "messages"]
-          });
-          break;
-        case "direct_message":
-          queryClient.invalidateQueries({
-            queryKey: ["/api/dm", data.payload.fromUserId]
-          });
-          break;
-        case "presence":
-          queryClient.invalidateQueries({
-            queryKey: ["/api/users"]
-          });
-          break;
+        switch (data.type) {
+          case "message":
+            queryClient.invalidateQueries({
+              queryKey: ["/api/channels", data.payload.channelId, "messages"]
+            });
+            break;
+          case "direct_message":
+            queryClient.invalidateQueries({
+              queryKey: ["/api/dm", data.payload.fromUserId]
+            });
+            break;
+          case "presence":
+            queryClient.invalidateQueries({
+              queryKey: ["/api/users"]
+            });
+            break;
+          case "error":
+            console.error('[WS] Server error:', data.payload.message);
+            break;
+        }
+      } catch (error) {
+        console.error('[WS] Error processing message:', error);
       }
     };
 
@@ -59,7 +66,7 @@ export function useWebSocket(userId: number | undefined) {
     if (ws.current?.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify({ type, payload }));
     } else {
-      console.warn('WebSocket is not connected');
+      console.warn('[WS] WebSocket is not connected');
     }
   };
 

@@ -9,17 +9,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Debug middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  log(`[REQUEST] ${req.method} ${req.path}`);
-  next();
-});
-
-// Setup authentication first
+// Setup authentication first, before any routes
 setupAuth(app);
 
-// Logging middleware
+// Debug middleware - after auth setup but before routes
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -52,6 +45,8 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    log("Starting server initialization...");
+
     // Register routes and get server instance
     const server = registerRoutes(app);
 
@@ -61,8 +56,6 @@ app.use((req, res, next) => {
       const message = err.message || "Internal Server Error";
       log(`[ERROR] ${status}: ${message}`);
       res.status(status).json({ message });
-      // Re-throw error for logging
-      throw err;
     });
 
     // Setup Vite or static serving last to not interfere with API routes
@@ -73,10 +66,9 @@ app.use((req, res, next) => {
     }
 
     // ALWAYS serve the app on port 5000
-    // this serves both the API and the client
     const PORT = 5000;
     server.listen(PORT, "0.0.0.0", () => {
-      log(`serving on port ${PORT}`);
+      log(`Server started on port ${PORT}`);
     });
   } catch (error) {
     log(`[FATAL] Server failed to start: ${error}`);

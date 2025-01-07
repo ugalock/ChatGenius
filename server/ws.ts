@@ -14,10 +14,10 @@ interface WSMessage {
 export function setupWebSocket(server: Server) {
   const wss = new WebSocketServer({ 
     server,
-    path: '/',
+    path: '/ws',
     handleProtocols: (protocols, request) => {
       // Handle Vite HMR protocol
-      if (request.headers['sec-websocket-protocol'] === 'vite-hmr') {
+      if (protocols && protocols.includes('vite-hmr')) {
         log('[WS] Accepting Vite HMR connection');
         return 'vite-hmr';
       }
@@ -40,7 +40,7 @@ export function setupWebSocket(server: Server) {
     // Setup chat WebSocket handlers
     ws.on("message", (data) => {
       try {
-        const message = JSON.parse(data.toString('utf-8')) as WSMessage;
+        const message = JSON.parse(data.toString()) as WSMessage;
         log(`[WS] Received message type: ${message.type}`);
 
         switch (message.type) {

@@ -9,16 +9,18 @@ function App() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
+  // If no user, show auth page
   if (!user) {
     return <AuthPage />;
   }
 
+  // User is authenticated, show main app
   return (
     <Switch>
       <Route path="/" component={ChatPage} />

@@ -11,7 +11,26 @@ export function useUser() {
 
   const { data: user, isLoading } = useQuery<User>({
     queryKey: ["/api/user"],
-    retry: false
+    retry: false,
+    staleTime: Infinity, // Prevent automatic refetching
+    refetchOnMount: false, // Don't refetch when component mounts
+    refetchOnWindowFocus: false, // Don't refetch on window focus
+    gcTime: Infinity, // Keep the data cached indefinitely
+    // Return null for 401 responses instead of throwing
+    queryFn: async () => {
+      const response = await fetch("/api/user", {
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          return null;
+        }
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    }
   });
 
   const loginMutation = useMutation({
@@ -69,6 +88,7 @@ export function useUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      queryClient.setQueryData(["/api/user"], null);
     }
   });
 
