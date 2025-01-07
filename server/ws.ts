@@ -21,6 +21,7 @@ type WSMessageType =
   | "presence"
   | "error"
   | "channel_created"
+  | "unread_update"
   | "auth_check";
 
 interface WSMessage {
@@ -28,6 +29,7 @@ interface WSMessage {
   payload: {
     userId?: number;
     channelId?: number;
+    messageId?: number;
     message?: string;
     content?: string;
     status?: string;

@@ -177,6 +177,10 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", requireAuth, async (req, res) => {
     try {
+      if (!req.user?.id) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
       const [user] = await db
         .select()
         .from(users)

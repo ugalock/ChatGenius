@@ -9,11 +9,11 @@ import {
   channelMembers,
   directMessages,
   users,
+  channelUnreads,
 } from "@db/schema";
-import { eq, and, or, desc, asc } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql } from "drizzle-orm";
 import { log } from "./vite";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
 
 // Channel creation validation schema
 const createChannelSchema = z.object({
@@ -43,10 +43,15 @@ export function registerRoutes(app: Express): Server {
           createdAt: channels.createdAt,
           createdById: channels.createdById,
           isMember: sql<boolean>`EXISTS (
-          SELECT 1 FROM ${channelMembers}
-          WHERE ${channelMembers.channelId} = ${channels.id}
-          AND ${channelMembers.userId} = ${req.user!.id}
-        )`,
+            SELECT 1 FROM ${channelMembers}
+            WHERE ${channelMembers.channelId} = ${channels.id}
+            AND ${channelMembers.userId} = ${req.user!.id}
+          )`,
+          unreadCount: sql<number>`COALESCE(
+            (SELECT unread_count FROM ${channelUnreads}
+            WHERE ${channelUnreads.channelId} = ${channels.id}
+            AND ${channelUnreads.userId} = ${req.user!.id}), 0
+          )`,
         })
         .from(channels)
         .orderBy(asc(channels.createdAt));
@@ -55,6 +60,52 @@ export function registerRoutes(app: Express): Server {
     } catch (error) {
       log(`[ERROR] Failed to fetch channels: ${error}`);
       res.status(500).json({ message: "Failed to fetch channels" });
+    }
+  });
+
+  // Create new channel
+  app.post("/api/channels", requireAuth, async (req, res) => {
+    try {
+      const result = createChannelSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({
+          message: "Invalid input",
+          errors: result.error.issues.map((i) => i.message),
+        });
+      }
+
+      const { name, description, isPrivate } = result.data;
+
+      // Start a transaction to create channel and add creator as member
+      const channel = await db.transaction(async (tx) => {
+        const [newChannel] = await tx
+          .insert(channels)
+          .values({
+            name,
+            description,
+            isPrivate,
+            createdById: req.user!.id,
+          })
+          .returning();
+
+        await tx.insert(channelMembers).values({
+          channelId: newChannel.id,
+          userId: req.user!.id,
+        });
+
+        return newChannel;
+      });
+
+      // Notify other users about the new channel
+      ws.broadcast({
+        type: "channel_created",
+        payload: { channel },
+      });
+
+      res.status(201).json(channel);
+    } catch (error) {
+      log(`[ERROR] Failed to create channel: ${error}`);
+      res.status(500).json({ message: "Failed to create channel" });
     }
   });
 
@@ -78,140 +129,99 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // All channels API endpoint
-  app.get("/api/channels/all", requireAuth, async (req, res) => {
+  // Mark channel messages as read
+  app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
     try {
-      log(`[API] Fetching all channels`);
-      const allChannels = await db
-        .select({
-          id: channels.id,
-          name: channels.name,
-          description: channels.description,
-          isPrivate: channels.isPrivate,
-          createdAt: channels.createdAt,
-          createdById: channels.createdById,
-          isMember: sql<boolean>`EXISTS (
-            SELECT 1 FROM ${channelMembers}
-            WHERE ${channelMembers.channelId} = ${channels.id}
-            AND ${channelMembers.userId} = ${req.user!.id}
-          )`,
-        })
-        .from(channels)
-        .orderBy(asc(channels.createdAt));
+      const channelId = parseInt(req.params.channelId);
+      const userId = req.user!.id;
 
-      res.json(allChannels);
-    } catch (error) {
-      log(`[ERROR] Failed to fetch all channels: ${error}`);
-      res.status(500).json({ message: "Failed to fetch channels" });
-    }
-  });
+      // Get the latest message in the channel
+      const [latestMessage] = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.channelId, channelId))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
 
-  app.post("/api/channels", async (req, res) => {
-    try {
-      // Validate request body
-      const result = createChannelSchema.safeParse(req.body);
-      if (!result.success) {
-        log(
-          `[ERROR] Channel creation validation failed: ${result.error.issues.map((i) => i.message).join(", ")}`,
-        );
-        return res.status(400).json({
-          message: "Invalid input",
-          errors: result.error.issues.map((i) => i.message),
-        });
+      if (!latestMessage) {
+        return res.json({ message: "No messages to mark as read" });
       }
 
-      const { name, description, isPrivate } = result.data;
-      log(`[INFO] Creating channel "${name}" for user ${req.user!.id}`);
-
-      // Start a transaction to ensure both operations succeed or fail together
-      const channel = await db.transaction(async (tx) => {
-        // Create the channel
-        const [newChannel] = await tx
-          .insert(channels)
-          .values({
-            name,
-            description,
-            isPrivate,
-            createdById: req.user!.id,
-          })
-          .returning();
-
-        log(`[INFO] Channel created with ID ${newChannel.id}`);
-
-        // Add the creator as a channel member
-        await tx.insert(channelMembers).values({
-          channelId: newChannel.id,
-          userId: req.user!.id,
+      // Update or insert the unread tracking record
+      await db
+        .insert(channelUnreads)
+        .values({
+          channelId,
+          userId,
+          lastReadMessageId: latestMessage.id,
+          unreadCount: 0,
+        })
+        .onConflictDoUpdate({
+          target: [channelUnreads.channelId, channelUnreads.userId],
+          set: {
+            lastReadMessageId: latestMessage.id,
+            unreadCount: 0,
+            updatedAt: new Date(),
+          },
         });
 
-        log(`[INFO] Added creator as channel member`);
-        return newChannel;
-      });
-
-      // Notify other users about the new channel creation
-      ws.broadcast({
-        type: "channel_created",
-        payload: { channel },
-      });
-
-      res.status(201).json(channel);
+      res.json({ message: "Messages marked as read" });
     } catch (error) {
-      log(`[ERROR] Failed to create channel: ${error}`);
-      res.status(500).json({ message: "Failed to create channel" });
+      log(`[ERROR] Failed to mark messages as read: ${error}`);
+      res.status(500).json({ message: "Failed to mark messages as read" });
     }
   });
 
   // Messages
-  app.get(
-    "/api/channels/:channelId/messages",
-    requireAuth,
-    async (req, res) => {
-      try {
-        const channelMessages = await db
-          .select({
-            message: messages,
-            user: users,
-          })
-          .from(messages)
-          .innerJoin(users, eq(messages.userId, users.id))
-          .where(eq(messages.channelId, parseInt(req.params.channelId)))
-          .orderBy(asc(messages.createdAt))
-          .limit(50);
+  app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
+    try {
+      const channelMessages = await db
+        .select({
+          message: messages,
+          user: users,
+        })
+        .from(messages)
+        .innerJoin(users, eq(messages.userId, users.id))
+        .where(eq(messages.channelId, parseInt(req.params.channelId)))
+        .orderBy(asc(messages.createdAt))
+        .limit(50);
 
-        res.json(
-          channelMessages.map(({ message, user }) => ({
-            ...message,
-            user: {
-              id: user.id,
-              username: user.username,
-              avatar: user.avatar,
-              status: user.status,
-            },
-          })),
-        );
-      } catch (error) {
-        log(`[ERROR] Failed to fetch messages: ${error}`);
-        res.status(500).json({ message: "Failed to fetch messages" });
-      }
-    },
-  );
+      res.json(
+        channelMessages.map(({ message, user }) => ({
+          ...message,
+          user: {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            status: user.status,
+          },
+        })),
+      );
+    } catch (error) {
+      log(`[ERROR] Failed to fetch messages: ${error}`);
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
 
-  app.post(
-    "/api/channels/:channelId/messages",
-    requireAuth,
-    async (req, res) => {
-      try {
-        const { content } = req.body;
-        const [message] = await db
+  app.post("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
+    try {
+      const { content } = req.body;
+      const channelId = parseInt(req.params.channelId);
+
+      // Start a transaction to handle message creation and unread count updates
+      const result = await db.transaction(async (tx) => {
+        // Create the message
+        const [message] = await tx
           .insert(messages)
           .values({
             content,
             userId: req.user!.id,
-            channelId: parseInt(req.params.channelId),
+            channelId,
           })
           .returning();
 
-        const [messageWithUser] = await db
+        // Get the message with user information
+        const [messageWithUser] = await tx
           .select({
             message: messages,
             user: users,
@@ -221,7 +231,43 @@ export function registerRoutes(app: Express): Server {
           .where(eq(messages.id, message.id))
           .limit(1);
 
-        const fullMessage = {
+        // Update unread counts for all channel members except the sender
+        const channelMembersList = await tx
+          .select()
+          .from(channelMembers)
+          .where(
+            and(
+              eq(channelMembers.channelId, channelId),
+              sql`${channelMembers.userId} != ${req.user!.id}`
+            )
+          );
+
+        // Bulk upsert unread counts
+        if (channelMembersList.length > 0) {
+          await tx
+            .insert(channelUnreads)
+            .values(
+              channelMembersList.map((member) => ({
+                channelId,
+                userId: member.userId,
+                lastReadMessageId: null,
+                unreadCount: sql`COALESCE(
+                  (SELECT unread_count FROM ${channelUnreads}
+                  WHERE channel_id = ${channelId}
+                  AND user_id = ${member.userId}
+                ), 0) + 1`,
+              }))
+            )
+            .onConflictDoUpdate({
+              target: [channelUnreads.channelId, channelUnreads.userId],
+              set: {
+                unreadCount: sql`${channelUnreads.unreadCount} + 1`,
+                updatedAt: new Date(),
+              },
+            });
+        }
+
+        return {
           ...messageWithUser.message,
           user: {
             id: messageWithUser.user.id,
@@ -230,20 +276,32 @@ export function registerRoutes(app: Express): Server {
             status: messageWithUser.user.status,
           },
         };
+      });
 
-        // Send message through WebSocket with proper typing
-        ws.broadcast({
-          type: "message",
-          payload: fullMessage,
-        });
+      // Send message through WebSocket
+      ws.broadcast({
+        type: "message",
+        payload: {
+          ...result,
+          channelId,
+        },
+      });
 
-        res.json(fullMessage);
-      } catch (error) {
-        log(`[ERROR] Failed to post message: ${error}`);
-        res.status(500).json({ message: "Failed to post message" });
-      }
-    },
-  );
+      // Broadcast unread count update
+      ws.broadcast({
+        type: "unread_update",
+        payload: {
+          channelId,
+          messageId: result.id,
+        },
+      });
+
+      res.json(result);
+    } catch (error) {
+      log(`[ERROR] Failed to post message: ${error}`);
+      res.status(500).json({ message: "Failed to post message" });
+    }
+  });
 
   // Direct Messages
   app.get("/api/dm/:userId", requireAuth, async (req, res) => {
@@ -333,12 +391,9 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Users
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", requireAuth, async (req, res) => {
     try {
-      // First get all users
       const allUsers = await db.select().from(users);
-
-      // Then get unread message counts for the current user
       const unreadCounts = await db
         .select({
           fromUserId: directMessages.fromUserId,
@@ -353,7 +408,6 @@ export function registerRoutes(app: Express): Server {
         )
         .groupBy(directMessages.fromUserId);
 
-      // Map the unread counts to users
       const usersWithUnread = allUsers.map((user) => ({
         ...user,
         unreadCount:
@@ -381,7 +435,6 @@ export function registerRoutes(app: Express): Server {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // Don't send password hash
       const { password, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error) {
