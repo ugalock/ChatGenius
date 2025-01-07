@@ -457,5 +457,19 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  app.delete("/api/channel-members/:id", requireAuth, async (req, res) => {
+    try {
+      await db
+        .delete(channelMembers)
+        .where(eq(channelMembers.id, parseInt(req.params.id)))
+        .execute();
+      
+      res.json({ message: "Channel member deleted successfully" });
+    } catch (error) {
+      log(`[ERROR] Failed to delete channel member: ${error}`);
+      res.status(500).json({ message: "Failed to delete channel member" });
+    }
+  });
+
   return httpServer;
 }
