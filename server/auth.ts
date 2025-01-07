@@ -39,68 +39,35 @@ const MemoryStore = createMemoryStore(session);
 export const sessionStore = new MemoryStore({
   checkPeriod: 86400000, // Prune expired entries every 24h
   ttl: 86400000 * 30, // 30 days
-  stale: false, // Delete expired sessions
-  max: 1000000, // Maximum number of sessions to store
-  dispose: function (key) {
-    log(`[AUTH] Session disposed: ${key}`);
-  },
-  noDisposeOnSet: true,
 });
 
-// Export session settings for WebSocket usage
+// Export session settings without cookie dependencies
 export const sessionSettings: session.SessionOptions = {
   secret: process.env.REPL_ID || "chat-genius-secret",
-  name: "chat.sid",
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // Only force HTTPS in production
-    maxAge: 86400000 * 30, // 30 days
-    path: "/",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Use lax in development
-  },
+  saveUninitialized: false,
+  resave: false,
   store: sessionStore,
-  saveUninitialized: false, // Don't create session until something stored
-  resave: false, // Don't save session if unmodified
-  unset: "destroy", // Remove session from store when .destroy() is called
-  rolling: true, // Force a new session identifier and reset expiration on every response
-  proxy: true, // Trust the reverse proxy
+  cookie: false, // Disable cookies completely
 };
 
+// Map to store user tokens
+const userTokens = new Map<string, number>();
+
+export function generateToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
 export function setupAuth(app: Express) {
-  // Set secure cookies in production
-  if (app.get("env") === "production") {
-    app.set("trust proxy", 1);
-    sessionSettings.cookie!.secure = true;
-  }
-
-  // Initialize session middleware first
+  // Initialize session middleware
   app.use(session(sessionSettings));
-
-  // Initialize passport after session
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Session debugging middleware
+  // Debugging middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
     log(`[AUTH] Request ${req.method} ${req.path}`);
     log(`[AUTH] Session ID: ${req.sessionID}`);
     log(`[AUTH] Is Authenticated: ${req.isAuthenticated()}`);
-    log(`[AUTH] Cookie Header: ${req.headers.cookie}`);
-
-    // Ensure proper cookie handling
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-
-    // Save session before sending response
-    if (req.session) {
-      req.session.save((err) => {
-        if (err) {
-          log(`[AUTH] Error saving session: ${err}`);
-        } else {
-          log(`[AUTH] Session saved successfully`);
-        }
-      });
-    }
-
     next();
   });
 
@@ -189,6 +156,9 @@ export function setupAuth(app: Express) {
 
       log(`[AUTH] Registration successful: ${username}`);
 
+      const token = generateToken();
+      userTokens.set(token, newUser.id);
+
       req.login(newUser, (err) => {
         if (err) {
           log(`[AUTH] Auto-login after registration failed: ${err}`);
@@ -197,6 +167,7 @@ export function setupAuth(app: Express) {
         return res.json({
           message: "Registration successful",
           user: { id: newUser.id, username: newUser.username },
+          token
         });
       });
     } catch (error) {
@@ -219,27 +190,20 @@ export function setupAuth(app: Express) {
           return res.status(400).send(info.message ?? "Login failed");
         }
 
-        // Update user status to online
-        db.update(users).set({ status: "online" }).where(eq(users.id, user.id));
-
         req.login(user, (err) => {
           if (err) {
             log(`[AUTH] Login session creation failed: ${err}`);
             return next(err);
           }
 
-          // Save session immediately after login
-          req.session!.save((err) => {
-            if (err) {
-              log(`[AUTH] Error saving session after login: ${err}`);
-              return next(err);
-            }
+          const token = generateToken();
+          userTokens.set(token, user.id);
 
-            log(`[AUTH] Login successful: ${user.username}`);
-            return res.json({
-              message: "Login successful",
-              user: { id: user.id, username: user.username },
-            });
+          log(`[AUTH] Login successful: ${user.username}`);
+          return res.json({
+            message: "Login successful",
+            user: { id: user.id, username: user.username },
+            token
           });
         });
       },
@@ -247,6 +211,11 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/logout", (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      userTokens.delete(token);
+    }
+
     if (req.user) {
       log(`[AUTH] Logging out user: ${req.user.id}`);
     }
@@ -257,25 +226,36 @@ export function setupAuth(app: Express) {
         return res.status(500).send("Logout failed");
       }
 
-      req.session!.destroy((err) => {
-        if (err) {
-          log(`[AUTH] Error destroying session: ${err}`);
-          return res.status(500).send("Logout failed");
-        }
-
-        res.clearCookie(sessionSettings.name!);
-        log(`[AUTH] Logout successful`);
-        res.json({ message: "Logout successful" });
-      });
+      log(`[AUTH] Logout successful`);
+      res.json({ message: "Logout successful" });
     });
   });
 
   app.get("/api/user", (req, res) => {
-    if (req.isAuthenticated()) {
-      log(`[AUTH] User session verified: ${req.user.id}`);
-      return res.json(req.user);
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token && userTokens.has(token)) {
+      const userId = userTokens.get(token);
+      if (userId) {
+        db.select().from(users).where(eq(users.id, userId)).then(([user]) => {
+          if (user) {
+            return res.json(user);
+          } else {
+            log(`[AUTH] Unauthorized access to /api/user`);
+            res.status(401).send("Not logged in");
+          }
+        });
+      } else {
+        log(`[AUTH] Unauthorized access to /api/user`);
+        res.status(401).send("Not logged in");
+      }
+    } else {
+      log(`[AUTH] Unauthorized access to /api/user`);
+      res.status(401).send("Not logged in");
     }
-    log(`[AUTH] Unauthorized access to /api/user`);
-    res.status(401).send("Not logged in");
   });
+}
+
+// Export token verification for WebSocket
+export function verifyToken(token: string): number | null {
+  return userTokens.get(token) || null;
 }

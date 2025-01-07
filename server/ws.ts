@@ -1,10 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { log } from "./vite";
-import type { Request } from "express";
-import { parse as parseCookie } from "cookie";
-import { sessionStore, sessionSettings } from "./auth";
-import type { SessionData } from "express-session";
+import { verifyToken } from "./auth";
 import { URL } from "url";
 
 interface ExtendedWebSocket extends WebSocket {
@@ -34,12 +31,6 @@ interface WSMessage {
   };
 }
 
-interface ExtendedSessionData extends SessionData {
-  passport?: {
-    user: number;
-  };
-}
-
 export function setupWebSocket(server: Server) {
   const wss = new WebSocketServer({
     server,
@@ -53,70 +44,23 @@ export function setupWebSocket(server: Server) {
         }
 
         const url = new URL(req.url || "", "ws://localhost");
-        const userId = url.searchParams.get("userId");
+        const token = url.searchParams.get("token");
 
+        if (!token) {
+          log("[WS] No token provided in URL parameters");
+          done(false, 401, "Unauthorized");
+          return;
+        }
+
+        const userId = verifyToken(token);
         if (!userId) {
-          log("[WS] No userId provided in URL parameters");
+          log("[WS] Invalid or expired token");
           done(false, 401, "Unauthorized");
           return;
         }
 
-        log(`[WS] Incoming connection request headers: ${JSON.stringify(req.headers)}`);
-        const cookieHeader = req.headers.cookie;
-
-        if (!cookieHeader) {
-          log("[WS] No cookie header found in request");
-          done(false, 401, "Unauthorized");
-          return;
-        }
-
-        try {
-          const cookies = parseCookie(cookieHeader || "");
-          const sidCookie = cookies[sessionSettings.name || "chat.sid"];
-
-          if (!sidCookie) {
-            log(`[WS] No session ID found in cookies`);
-            done(false, 401, "Unauthorized");
-            return;
-          }
-
-          // Convert callback to Promise for better async handling
-          const session = await new Promise<ExtendedSessionData | null>((resolve, reject) => {
-            sessionStore.get(sidCookie, (err, session) => {
-              if (err) {
-                reject(err);
-                return;
-              }
-              resolve(session as ExtendedSessionData | null);
-            });
-          });
-
-          if (!session) {
-            log(`[WS] No session found for ID: ${sidCookie}`);
-            done(false, 401, "Session not found");
-            return;
-          }
-
-          if (!session.passport?.user) {
-            log(`[WS] Invalid session: No user found in session data`);
-            done(false, 401, "Unauthorized");
-            return;
-          }
-
-          // Verify that the session user matches the requested userId
-          if (session.passport.user !== parseInt(userId)) {
-            log(`[WS] User ID mismatch: Session user ${session.passport.user} != Requested user ${userId}`);
-            done(false, 401, "Unauthorized");
-            return;
-          }
-
-          log(`[WS] Session verified for user ${session.passport.user}`);
-          done(true);
-        } catch (error) {
-          log(`[WS] Cookie parsing error: ${error}`);
-          done(false, 400, "Invalid cookie");
-          return;
-        }
+        log(`[WS] Token verified for user ${userId}`);
+        done(true);
       } catch (error) {
         log(`[WS] Error during client verification: ${error}`);
         done(false, 500, "Internal Server Error");
@@ -154,9 +98,15 @@ export function setupWebSocket(server: Server) {
     }
 
     const url = new URL(req.url || "", "ws://localhost");
-    const userId = parseInt(url.searchParams.get("userId") || "0");
-    ws.userId = userId;
+    const token = url.searchParams.get("token");
+    const userId = token ? verifyToken(token) : null;
 
+    if (!userId) {
+      ws.close(1008, "Invalid token");
+      return;
+    }
+
+    ws.userId = userId;
     log(`[WS] Client connected for user ${userId}`);
 
     // Handle existing connection

@@ -13,16 +13,10 @@ app.set("trust proxy", 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Configure CORS with credentials support
-app.use(cors({
-  origin: true, // Allow all origins in development
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-  exposedHeaders: ['Set-Cookie']
-}));
+// Configure CORS without cookie settings
+app.use(cors());
 
-// Setup authentication after CORS
+// Setup authentication
 setupAuth(app);
 
 // Debug middleware for request logging
@@ -71,7 +65,7 @@ app.use((req, res, next) => {
       res.status(status).json({ message });
     });
 
-    // Setup Vite or static serving last
+    // Setup Vite or static serving
     if (app.get("env") === "development") {
       await setupVite(app, server);
     } else {
