@@ -12,11 +12,26 @@ export function useWebSocket(userId: number | undefined) {
     function connect() {
       // Use the same host and port as the main application
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const websocket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      const host = window.location.host;
+
+      // Create WebSocket URL and ensure credentials are included
+      const wsUrl = new URL(`${protocol}//${host}/ws`);
+      wsUrl.searchParams.set('userId', userId.toString());
+
+      // Create WebSocket with credentials support
+      const websocket = new WebSocket(wsUrl);
+      websocket.addEventListener('open', () => {
+        console.log('[WS] WebSocket connected, sending auth check');
+        websocket.send(JSON.stringify({
+          type: 'auth_check',
+          payload: { userId }
+        }));
+      });
+
       ws.current = websocket;
 
       websocket.onopen = () => {
-        console.log('[WS] WebSocket connected');
+        console.log('[WS] WebSocket connection established');
       };
 
       websocket.onerror = (error) => {

@@ -51,7 +51,7 @@ export const sessionSettings: session.SessionOptions = {
     maxAge: 86400000 * 7, // 7 days
     httpOnly: true,
     secure: false, // Will be set to true in production
-    sameSite: 'lax',
+    sameSite: 'none', // Changed from 'lax' to 'none' to allow WebSocket cross-origin
     path: '/'
   },
   store: sessionStore,
@@ -73,7 +73,7 @@ export function setupAuth(app: Express) {
 
   // Add logging middleware to track session and auth state
   app.use((req, res, next) => {
-    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, User: ${req.user?.id || 'none'}`);
+    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, Cookie: ${req.headers.cookie}`);
     next();
   });
 
@@ -138,7 +138,33 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // Auth routes
+  app.post("/api/login", (req, res, next) => {
+    passport.authenticate("local", (err: any, user: Express.User, info: IVerifyOptions) => {
+      if (err) {
+        log(`[AUTH] Login error: ${err}`);
+        return next(err);
+      }
+
+      if (!user) {
+        log(`[AUTH] Login failed: ${info.message}`);
+        return res.status(400).send(info.message ?? "Login failed");
+      }
+
+      req.login(user, async (err) => {
+        if (err) {
+          log(`[AUTH] Login session creation failed: ${err}`);
+          return next(err);
+        }
+
+        log(`[AUTH] Login successful: ${user.username}`);
+        return res.json({
+          message: "Login successful",
+          user: { id: user.id, username: user.username }
+        });
+      });
+    })(req, res, next);
+  });
+
   app.post("/api/register", async (req, res, next) => {
     try {
       const result = insertUserSchema.safeParse(req.body);
@@ -188,33 +214,6 @@ export function setupAuth(app: Express) {
       log(`[AUTH] Registration error: ${error}`);
       next(error);
     }
-  });
-
-  app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: Express.User, info: IVerifyOptions) => {
-      if (err) {
-        log(`[AUTH] Login error: ${err}`);
-        return next(err);
-      }
-
-      if (!user) {
-        log(`[AUTH] Login failed: ${info.message}`);
-        return res.status(400).send(info.message ?? "Login failed");
-      }
-
-      req.login(user, async (err) => {
-        if (err) {
-          log(`[AUTH] Login session creation failed: ${err}`);
-          return next(err);
-        }
-
-        log(`[AUTH] Login successful: ${user.username}`);
-        return res.json({
-          message: "Login successful",
-          user: { id: user.id, username: user.username }
-        });
-      });
-    })(req, res, next);
   });
 
   app.post("/api/logout", async (req, res) => {

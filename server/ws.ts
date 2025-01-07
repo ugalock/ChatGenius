@@ -5,13 +5,14 @@ import type { Request } from "express";
 import { parse as parseCookie } from "cookie";
 import { sessionStore, sessionSettings } from "./auth";
 import type { SessionData } from "express-session";
+import { URL } from "url";
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: number;
   isAlive: boolean;
 }
 
-type WSMessageType = "typing" | "message" | "direct_message" | "connected" | "presence" | "error";
+type WSMessageType = "typing" | "message" | "direct_message" | "connected" | "presence" | "error" | "channel_created" | "auth_check";
 
 interface WSMessage {
   type: WSMessageType;
@@ -21,6 +22,7 @@ interface WSMessage {
     message?: string;
     content?: string;
     status?: string;
+    [key: string]: any;
   };
 }
 
@@ -38,23 +40,36 @@ export function setupWebSocket(server: Server) {
       try {
         // Skip verification for Vite HMR
         if (req.headers['sec-websocket-protocol'] === 'vite-hmr') {
+          log("[WS] Vite HMR connection, skipping auth");
           return done(true);
+        }
+
+        // Get userId from URL parameters
+        const url = new URL(req.url || '', 'ws://localhost');
+        const userId = url.searchParams.get('userId');
+
+        if (!userId) {
+          log("[WS] No userId provided in URL parameters");
+          done(false, 401, "Unauthorized");
+          return;
         }
 
         const cookieHeader = req.headers.cookie;
         if (!cookieHeader) {
-          log("[WS] No cookie header found");
+          log("[WS] No cookie header found in request");
           done(false, 401, "Unauthorized");
           return;
         }
 
         const cookies = parseCookie(cookieHeader);
-        const sid = cookies[sessionSettings.name!];
+        const sid = cookies[sessionSettings.name];
         if (!sid) {
-          log("[WS] No session ID found in cookies");
+          log(`[WS] No session ID found in cookies. Cookie name: ${sessionSettings.name}`);
           done(false, 401, "Unauthorized");
           return;
         }
+
+        log(`[WS] Verifying session ID: ${sid} for user ${userId}`);
 
         // Convert callback to Promise for proper async handling
         await new Promise<void>((resolve, reject) => {
@@ -68,9 +83,17 @@ export function setupWebSocket(server: Server) {
 
             const typedSession = session as ExtendedSessionData | null;
             if (!typedSession?.passport?.user) {
-              log(`[WS] Invalid session: No user found`);
+              log(`[WS] Invalid session: No user found in session data`);
               done(false, 401, "Unauthorized");
               reject(new Error("Invalid session"));
+              return;
+            }
+
+            // Verify that the session user matches the requested userId
+            if (typedSession.passport.user !== parseInt(userId)) {
+              log(`[WS] User ID mismatch: Session user ${typedSession.passport.user} != Requested user ${userId}`);
+              done(false, 401, "Unauthorized");
+              reject(new Error("User ID mismatch"));
               return;
             }
 
@@ -83,14 +106,6 @@ export function setupWebSocket(server: Server) {
         log(`[WS] Error during client verification: ${error}`);
         done(false, 500, "Internal Server Error");
       }
-    },
-    handleProtocols: (protocols: Set<string>) => {
-      // Accept Vite HMR protocol if present
-      if (protocols.has('vite-hmr')) {
-        return 'vite-hmr';
-      }
-      // For chat connections, accept without specific protocol
-      return '';
     }
   });
 
@@ -115,7 +130,6 @@ export function setupWebSocket(server: Server) {
 
   wss.on("connection", async (wsClient: WebSocket, req) => {
     const ws = wsClient as ExtendedWebSocket;
-    log("[WS] New connection established");
     ws.isAlive = true;
 
     // Skip chat setup for Vite HMR connections
@@ -124,66 +138,30 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    // Extract session from cookie and set up the connection
-    const cookieHeader = req.headers.cookie;
-    if (!cookieHeader) {
-      log("[WS] No cookie header found in connection");
-      ws.close(1008, "Unauthorized");
-      return;
+    const url = new URL(req.url || '', 'ws://localhost');
+    const userId = parseInt(url.searchParams.get('userId') || '0');
+    ws.userId = userId;
+
+    log(`[WS] Client connected for user ${userId}`);
+
+    // Handle existing connection
+    const existingClient = clients.get(userId);
+    if (existingClient) {
+      log(`[WS] Closing existing connection for user ${userId}`);
+      existingClient.close(1000, "New connection established");
+      clients.delete(userId);
     }
 
-    const cookies = parseCookie(cookieHeader);
-    const sid = cookies[sessionSettings.name!];
+    clients.set(userId, ws);
 
-    // Convert callback to Promise for proper async handling
+    // Send initial connection success
     try {
-      await new Promise<void>((resolve, reject) => {
-        sessionStore.get(sid, (err, session) => {
-          if (err) {
-            log(`[WS] Session store error: ${err}`);
-            reject(err);
-            return;
-          }
-
-          const typedSession = session as ExtendedSessionData | null;
-          if (!typedSession?.passport?.user) {
-            log(`[WS] Invalid session: No user found`);
-            reject(new Error("Invalid session"));
-            return;
-          }
-
-          const userId = typedSession.passport.user;
-          log(`[WS] Setting up connection for user ${userId}`);
-
-          // Handle existing connection
-          const existingClient = clients.get(userId);
-          if (existingClient) {
-            log(`[WS] Closing existing connection for user ${userId}`);
-            existingClient.close(1000, "New connection established");
-            clients.delete(userId);
-          }
-
-          // Set up new connection
-          ws.userId = userId;
-          clients.set(userId, ws);
-
-          // Send initial connection success
-          try {
-            ws.send(JSON.stringify({
-              type: "connected" as WSMessageType,
-              payload: { userId, message: "Connected to server" }
-            }));
-          } catch (error) {
-            log(`[WS] Error sending welcome message: ${error}`);
-          }
-
-          resolve();
-        });
-      });
+      ws.send(JSON.stringify({
+        type: "connected" as WSMessageType,
+        payload: { userId, message: "Connected to server" }
+      }));
     } catch (error) {
-      log(`[WS] Session verification failed: ${error}`);
-      ws.close(1008, "Unauthorized");
-      return;
+      log(`[WS] Error sending welcome message: ${error}`);
     }
 
     ws.on('pong', () => {
@@ -199,30 +177,15 @@ export function setupWebSocket(server: Server) {
         const message = JSON.parse(data.toString()) as WSMessage;
         log(`[WS] Received message type: ${message.type} from user ${ws.userId}`);
 
-        switch (message.type) {
-          case "typing":
-            broadcast({
-              type: "typing",
-              payload: {
-                userId: ws.userId,
-                channelId: message.payload.channelId
-              }
-            });
-            break;
-
-          case "message":
-            broadcast({
-              type: "message",
-              payload: {
-                ...message.payload,
-                userId: ws.userId
-              }
-            });
-            break;
-
-          default:
-            log(`[WS] Unknown message type: ${message.type}`);
+        if (message.type === 'auth_check') {
+          ws.send(JSON.stringify({
+            type: "connected",
+            payload: { userId: ws.userId, message: "Authentication successful" }
+          }));
+          return;
         }
+
+        broadcast(message);
       } catch (error) {
         log(`[WS] Error processing message: ${error}`);
         if (ws.readyState === WebSocket.OPEN) {
