@@ -11,9 +11,17 @@ interface ExtendedWebSocket extends WebSocket {
   isAlive: boolean;
 }
 
+type WSMessageType = "typing" | "message" | "direct_message" | "connected" | "presence" | "error";
+
 interface WSMessage {
-  type: string;
-  payload: any;
+  type: WSMessageType;
+  payload: {
+    userId?: number;
+    channelId?: number;
+    message?: string;
+    content?: string;
+    status?: string;
+  };
 }
 
 interface ExtendedSessionData extends SessionData {
@@ -26,10 +34,59 @@ export function setupWebSocket(server: Server) {
   const wss = new WebSocketServer({ 
     server,
     path: '/ws',
-    handleProtocols: (protocols, request) => {
-      // Handle Vite HMR protocol
-      if (protocols && Array.from(protocols).includes('vite-hmr')) {
-        log('[WS] Accepting Vite HMR connection');
+    verifyClient: async ({ req }, done) => {
+      try {
+        // Skip verification for Vite HMR
+        if (req.headers['sec-websocket-protocol'] === 'vite-hmr') {
+          return done(true);
+        }
+
+        const cookieHeader = req.headers.cookie;
+        if (!cookieHeader) {
+          log("[WS] No cookie header found");
+          done(false, 401, "Unauthorized");
+          return;
+        }
+
+        const cookies = parseCookie(cookieHeader);
+        const sid = cookies[sessionSettings.name!];
+        if (!sid) {
+          log("[WS] No session ID found in cookies");
+          done(false, 401, "Unauthorized");
+          return;
+        }
+
+        // Convert callback to Promise for proper async handling
+        await new Promise<void>((resolve, reject) => {
+          sessionStore.get(sid, (err, session) => {
+            if (err) {
+              log(`[WS] Session store error: ${err}`);
+              done(false, 500, "Internal Server Error");
+              reject(err);
+              return;
+            }
+
+            const typedSession = session as ExtendedSessionData | null;
+            if (!typedSession?.passport?.user) {
+              log(`[WS] Invalid session: No user found`);
+              done(false, 401, "Unauthorized");
+              reject(new Error("Invalid session"));
+              return;
+            }
+
+            log(`[WS] Session verified for user ${typedSession.passport.user}`);
+            done(true);
+            resolve();
+          });
+        });
+      } catch (error) {
+        log(`[WS] Error during client verification: ${error}`);
+        done(false, 500, "Internal Server Error");
+      }
+    },
+    handleProtocols: (protocols: Set<string>) => {
+      // Accept Vite HMR protocol if present
+      if (protocols.has('vite-hmr')) {
         return 'vite-hmr';
       }
       // For chat connections, accept without specific protocol
@@ -56,39 +113,53 @@ export function setupWebSocket(server: Server) {
     });
   }, 30000);
 
-  wss.on("connection", async (ws: ExtendedWebSocket, req) => {
+  wss.on("connection", async (wsClient: WebSocket, req) => {
+    const ws = wsClient as ExtendedWebSocket;
     log("[WS] New connection established");
     ws.isAlive = true;
 
-    // Skip chat-related setup for Vite HMR connections
+    // Skip chat setup for Vite HMR connections
     if (req.headers['sec-websocket-protocol'] === 'vite-hmr') {
-      log("[WS] Vite HMR connection detected");
+      log("[WS] Vite HMR connection established");
       return;
     }
 
-    // Extract session from cookie
+    // Extract session from cookie and set up the connection
     const cookieHeader = req.headers.cookie;
-    if (cookieHeader) {
-      const cookies = parseCookie(cookieHeader);
-      const sid = cookies[sessionSettings.name!];
+    if (!cookieHeader) {
+      log("[WS] No cookie header found in connection");
+      ws.close(1008, "Unauthorized");
+      return;
+    }
 
-      if (sid) {
-        // Verify session
-        sessionStore.get(sid, (err, session: ExtendedSessionData | null) => {
-          if (err || !session?.passport?.user) {
-            log(`[WS] Invalid session for WebSocket connection`);
-            ws.close();
+    const cookies = parseCookie(cookieHeader);
+    const sid = cookies[sessionSettings.name!];
+
+    // Convert callback to Promise for proper async handling
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sessionStore.get(sid, (err, session) => {
+          if (err) {
+            log(`[WS] Session store error: ${err}`);
+            reject(err);
             return;
           }
 
-          const userId = session.passport.user;
-          log(`[WS] Session authenticated for user ${userId}`);
+          const typedSession = session as ExtendedSessionData | null;
+          if (!typedSession?.passport?.user) {
+            log(`[WS] Invalid session: No user found`);
+            reject(new Error("Invalid session"));
+            return;
+          }
+
+          const userId = typedSession.passport.user;
+          log(`[WS] Setting up connection for user ${userId}`);
 
           // Handle existing connection
           const existingClient = clients.get(userId);
           if (existingClient) {
             log(`[WS] Closing existing connection for user ${userId}`);
-            existingClient.close();
+            existingClient.close(1000, "New connection established");
             clients.delete(userId);
           }
 
@@ -99,21 +170,26 @@ export function setupWebSocket(server: Server) {
           // Send initial connection success
           try {
             ws.send(JSON.stringify({
-              type: "connected",
+              type: "connected" as WSMessageType,
               payload: { userId, message: "Connected to server" }
             }));
           } catch (error) {
             log(`[WS] Error sending welcome message: ${error}`);
           }
+
+          resolve();
         });
-      }
+      });
+    } catch (error) {
+      log(`[WS] Session verification failed: ${error}`);
+      ws.close(1008, "Unauthorized");
+      return;
     }
 
     ws.on('pong', () => {
       ws.isAlive = true;
     });
 
-    // Setup chat WebSocket handlers
     ws.on("message", (data) => {
       try {
         if (!ws.userId) {
@@ -121,7 +197,7 @@ export function setupWebSocket(server: Server) {
         }
 
         const message = JSON.parse(data.toString()) as WSMessage;
-        log(`[WS] Received message type: ${message.type}`);
+        log(`[WS] Received message type: ${message.type} from user ${ws.userId}`);
 
         switch (message.type) {
           case "typing":
@@ -151,7 +227,7 @@ export function setupWebSocket(server: Server) {
         log(`[WS] Error processing message: ${error}`);
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
-            type: "error",
+            type: "error" as WSMessageType,
             payload: { message: error instanceof Error ? error.message : "Invalid message format" }
           }));
         }
@@ -159,7 +235,7 @@ export function setupWebSocket(server: Server) {
     });
 
     ws.on("error", (error) => {
-      log(`[WS] WebSocket error: ${error}`);
+      log(`[WS] WebSocket error for user ${ws.userId}: ${error}`);
     });
 
     ws.on("close", () => {
