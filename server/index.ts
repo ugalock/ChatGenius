@@ -5,7 +5,7 @@ import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
 
-// Basic middleware setup
+// Basic middleware setup - must be before auth
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

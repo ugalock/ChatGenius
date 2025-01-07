@@ -8,6 +8,7 @@ import { promisify } from "util";
 import { users, type SelectUser, insertUserSchema } from "@db/schema";
 import { db } from "@db";
 import { eq } from "drizzle-orm";
+import { log } from "./vite";
 
 const scryptAsync = promisify(scrypt);
 const crypto = {
@@ -49,8 +50,11 @@ export function setupAuth(app: Express) {
     },
     store: new MemoryStore({
       checkPeriod: 86400000, // prune expired entries every 24h
+      ttl: 86400000 * 7, // 7 days
+      stale: false
     }),
-    name: 'chat.sid'
+    name: 'chat.sid',
+    rolling: true // Refresh cookie on each request
   };
 
   if (app.get("env") === "production") {
@@ -63,6 +67,12 @@ export function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
+  // Add logging middleware to track session and auth state
+  app.use((req, res, next) => {
+    log(`[AUTH] Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}`);
+    next();
+  });
+
   passport.use(
     new LocalStrategy(async (username, password, done) => {
       try {
@@ -73,11 +83,13 @@ export function setupAuth(app: Express) {
           .limit(1);
 
         if (!user) {
+          log(`[AUTH] Login failed: User not found - ${username}`);
           return done(null, false, { message: "Incorrect username." });
         }
 
         const isMatch = await crypto.compare(password, user.password);
         if (!isMatch) {
+          log(`[AUTH] Login failed: Incorrect password - ${username}`);
           return done(null, false, { message: "Incorrect password." });
         }
 
@@ -87,14 +99,17 @@ export function setupAuth(app: Express) {
           .set({ status: "online" })
           .where(eq(users.id, user.id));
 
+        log(`[AUTH] Login successful: ${username}`);
         return done(null, user);
       } catch (err) {
+        log(`[AUTH] Login error: ${err}`);
         return done(err);
       }
     })
   );
 
   passport.serializeUser((user, done) => {
+    log(`[AUTH] Serializing user: ${user.id}`);
     done(null, user.id);
   });
 
@@ -107,19 +122,24 @@ export function setupAuth(app: Express) {
         .limit(1);
 
       if (!user) {
+        log(`[AUTH] Deserialize failed: User not found - ${id}`);
         return done(null, false);
       }
 
+      log(`[AUTH] Deserialized user: ${user.id}`);
       done(null, user);
     } catch (err) {
+      log(`[AUTH] Deserialize error: ${err}`);
       done(err);
     }
   });
 
+  // Auth routes
   app.post("/api/register", async (req, res, next) => {
     try {
       const result = insertUserSchema.safeParse(req.body);
       if (!result.success) {
+        log(`[AUTH] Registration validation failed: ${result.error.issues.map(i => i.message).join(", ")}`);
         return res.status(400).send(
           "Invalid input: " + result.error.issues.map(i => i.message).join(", ")
         );
@@ -133,6 +153,7 @@ export function setupAuth(app: Express) {
         .limit(1);
 
       if (existingUser) {
+        log(`[AUTH] Registration failed: Username exists - ${username}`);
         return res.status(400).send("Username already exists");
       }
 
@@ -146,9 +167,10 @@ export function setupAuth(app: Express) {
         })
         .returning();
 
-      // Log the user in after registration
+      log(`[AUTH] Registration successful: ${username}`);
       req.login(newUser, (err) => {
         if (err) {
+          log(`[AUTH] Auto-login after registration failed: ${err}`);
           return next(err);
         }
         return res.json({
@@ -157,6 +179,7 @@ export function setupAuth(app: Express) {
         });
       });
     } catch (error) {
+      log(`[AUTH] Registration error: ${error}`);
       next(error);
     }
   });
@@ -164,18 +187,22 @@ export function setupAuth(app: Express) {
   app.post("/api/login", (req, res, next) => {
     passport.authenticate("local", (err: any, user: Express.User, info: IVerifyOptions) => {
       if (err) {
+        log(`[AUTH] Login error: ${err}`);
         return next(err);
       }
 
       if (!user) {
+        log(`[AUTH] Login failed: ${info.message}`);
         return res.status(400).send(info.message ?? "Login failed");
       }
 
       req.login(user, async (err) => {
         if (err) {
+          log(`[AUTH] Login session creation failed: ${err}`);
           return next(err);
         }
 
+        log(`[AUTH] Login successful: ${user.username}`);
         return res.json({
           message: "Login successful",
           user: { id: user.id, username: user.username }
@@ -191,24 +218,28 @@ export function setupAuth(app: Express) {
           .update(users)
           .set({ status: "offline" })
           .where(eq(users.id, req.user.id));
+        log(`[AUTH] User status set to offline: ${req.user.id}`);
       } catch (error) {
-        // Continue with logout even if status update fails
+        log(`[AUTH] Error updating user status on logout: ${error}`);
       }
     }
 
     req.logout((err) => {
       if (err) {
+        log(`[AUTH] Logout failed: ${err}`);
         return res.status(500).send("Logout failed");
       }
+      log(`[AUTH] Logout successful`);
       res.json({ message: "Logout successful" });
     });
   });
 
   app.get("/api/user", (req, res) => {
     if (req.isAuthenticated()) {
+      log(`[AUTH] User session verified: ${req.user.id}`);
       return res.json(req.user);
     }
-    // Return 401 without a message for unauthenticated requests
+    log(`[AUTH] Unauthorized access to /api/user`);
     res.status(401).end();
   });
 }
