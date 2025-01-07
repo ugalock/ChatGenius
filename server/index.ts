@@ -6,15 +6,16 @@ import cors from 'cors';
 
 const app = express();
 
-// Trust proxy in all environments for proper cookie handling
-app.set("trust proxy", 1);
-
 // Basic middleware setup
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Configure CORS without cookie settings
-app.use(cors());
+// Configure CORS
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 // Setup authentication
 setupAuth(app);

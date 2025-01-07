@@ -1,20 +1,13 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupWebSocket } from "./ws";
+import { requireAuth } from "./auth";
 import { db } from "@db";
 import { channels, messages, channelMembers, directMessages, users } from "@db/schema";
 import { eq, and, or, desc } from "drizzle-orm";
 import { log } from "./vite";
 import { z } from "zod";
 
-// Middleware to check authentication
-function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.isAuthenticated()) {
-    log(`[ERROR] Unauthorized access attempt to ${req.path}`);
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-  next();
-}
 
 // Channel creation validation schema
 const createChannelSchema = z.object({
@@ -62,8 +55,8 @@ export function registerRoutes(app: Express): Server {
       const result = createChannelSchema.safeParse(req.body);
       if (!result.success) {
         log(`[ERROR] Channel creation validation failed: ${result.error.issues.map(i => i.message).join(", ")}`);
-        return res.status(400).json({ 
-          message: "Invalid input", 
+        return res.status(400).json({
+          message: "Invalid input",
           errors: result.error.issues.map(i => i.message)
         });
       }

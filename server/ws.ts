@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { log } from "./vite";
-import { verifyToken } from "./auth";
+import { verifyAuthToken } from "./auth";
 import { URL } from "url";
 
 interface ExtendedWebSocket extends WebSocket {
@@ -52,14 +52,14 @@ export function setupWebSocket(server: Server) {
           return;
         }
 
-        const userId = verifyToken(token);
+        const userId = verifyAuthToken(token);
         if (!userId) {
-          log("[WS] Invalid or expired token");
+          log("[WS] Invalid or expired JWT token");
           done(false, 401, "Unauthorized");
           return;
         }
 
-        log(`[WS] Token verified for user ${userId}`);
+        log(`[WS] JWT verified for user ${userId}`);
         done(true);
       } catch (error) {
         log(`[WS] Error during client verification: ${error}`);
@@ -99,7 +99,7 @@ export function setupWebSocket(server: Server) {
 
     const url = new URL(req.url || "", "ws://localhost");
     const token = url.searchParams.get("token");
-    const userId = token ? verifyToken(token) : null;
+    const userId = token ? verifyAuthToken(token) : null;
 
     if (!userId) {
       ws.close(1008, "Invalid token");
