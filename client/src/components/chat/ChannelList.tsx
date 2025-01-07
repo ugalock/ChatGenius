@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Hash, MessageCircle } from "lucide-react";
+import { Plus, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +16,11 @@ import { useForm } from "react-hook-form";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Channel } from "@db/schema";
 
+type ExtendedChannel = Channel & {
+  isMember: boolean;
+  unread?: number;
+};
+
 type Props = {
   selectedChannelId: number | null;
   onSelectChannel: (channelId: number) => void;
@@ -30,10 +35,10 @@ export default function ChannelList({
   const form = useForm<{ name: string; description: string }>();
 
   const { token } = useUser();
-  const { data: channels } = useQuery<Channel[]>({
-    queryKey: ["/api/channels"],
+  const { data: channels } = useQuery<ExtendedChannel[]>({
+    queryKey: ["/api/channels/all"],
     queryFn: async () => {
-      const response = await fetch("/api/channels", {
+      const response = await fetch("/api/channels/all", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -62,7 +67,7 @@ export default function ChannelList({
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels/all"] });
       setOpen(false);
       form.reset();
     },
@@ -77,13 +82,17 @@ export default function ChannelList({
             <Button
               key={channel.id}
               variant={channel.id === selectedChannelId ? "ghost" : "ghost"}
-              className="flex items-center mb-2 cursor-pointer hover:bg-gray-700 rounded"
+              className={`flex items-center mb-2 cursor-pointer hover:bg-gray-700 rounded w-full justify-between ${
+                !channel.isMember ? "font-bold" : ""
+              }`}
               onClick={() => onSelectChannel(channel.id)}
             >
-              <MessageCircle className="h-4 w-4 mr-2" />
-              <span>{channel.name}</span>
+              <div className="flex items-center">
+                <MessageCircle className="h-4 w-4 mr-2" />
+                <span className="truncate">{channel.name}</span>
+              </div>
               {channel.unread && channel.unread > 0 && (
-                <span className="ml-auto bg-blue-500 rounded-full px-2 py-1 text-xs">
+                <span className="bg-blue-500 rounded-full px-2 py-0.5 text-xs">
                   {channel.unread}
                 </span>
               )}

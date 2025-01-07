@@ -31,9 +31,13 @@ export default function MessageList({ channelId, userId }: Props) {
 
   // Query for messages
   const { data: messages } = useQuery<ExtendedMessage[]>({
-    queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
+    queryKey: userId
+      ? ["/api/dm", userId]
+      : ["/api/channels", channelId, "messages"],
     queryFn: async () => {
-      const url = userId ? `/api/dm/${userId}` : `/api/channels/${channelId}/messages`;
+      const url = userId
+        ? `/api/dm/${userId}`
+        : `/api/channels/${channelId}/messages`;
       const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -90,8 +94,10 @@ export default function MessageList({ channelId, userId }: Props) {
   }
 
   // Helper function to determine if a message is a channel message
-  const isChannelMessage = (message: ExtendedMessage): message is ExtendedChannelMessage => {
-    return 'channelId' in message;
+  const isChannelMessage = (
+    message: ExtendedMessage,
+  ): message is ExtendedChannelMessage => {
+    return "channelId" in message;
   };
 
   const getMessageTitle = () => {
@@ -104,9 +110,11 @@ export default function MessageList({ channelId, userId }: Props) {
     return userId ? "Direct Message" : "# channel";
   };
 
-  const subtitle = userId 
-    ? chatPartner?.status === 'online' ? 'Active Now' : 'Offline'
-    : `${messages?.length || 0} messages`;
+  // const subtitle = userId
+  //   ? chatPartner?.status === "online"
+  //     ? "Active Now"
+  //     : "Offline"
+  //   : `${messages?.length || 0} messages`;
 
   return (
     <div className="h-full flex flex-col">
@@ -122,19 +130,23 @@ export default function MessageList({ channelId, userId }: Props) {
               </Avatar>
               <div
                 className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
-                  chatPartner.status === "online" ? "bg-green-500" : "bg-gray-500"
+                  chatPartner.status === "online"
+                    ? "bg-green-500"
+                    : "bg-gray-500"
                 }`}
               />
             </div>
           )}
           <div>
             <h2 className="text-xl font-semibold">{getMessageTitle()}</h2>
-            <span className="text-sm text-gray-500">{subtitle}</span>
+            {/* <span className="text-sm text-gray-500">{subtitle}</span> */}
           </div>
         </div>
         <div className="flex items-center space-x-4">
           <Search className="w-5 h-5 text-gray-500 cursor-pointer" />
-          {!userId && <Users className="w-5 h-5 text-gray-500 cursor-pointer" />}
+          {!userId && (
+            <Users className="w-5 h-5 text-gray-500 cursor-pointer" />
+          )}
           <File className="w-5 h-5 text-gray-500 cursor-pointer" />
         </div>
       </div>
@@ -175,10 +187,12 @@ export default function MessageList({ channelId, userId }: Props) {
                 )}
                 <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                   <p className="text-gray-800">{message.content}</p>
-                  {message.attachments && typeof message.attachments === 'object' && (
-                    <div className="mt-2 space-y-2">
-                      {Object.entries(message.attachments as Record<string, string>)
-                        .map(([name, url]) => (
+                  {message.attachments &&
+                    typeof message.attachments === "object" && (
+                      <div className="mt-2 space-y-2">
+                        {Object.entries(
+                          message.attachments as Record<string, string>,
+                        ).map(([name, url]) => (
                           <a
                             key={name}
                             href={url}
@@ -189,12 +203,14 @@ export default function MessageList({ channelId, userId }: Props) {
                             {name}
                           </a>
                         ))}
-                    </div>
-                  )}
-                  {message.reactions && typeof message.reactions === 'object' && (
-                    <div className="mt-2 flex gap-1">
-                      {Object.entries(message.reactions as Record<string, string[]>)
-                        .map(([emoji, users]) => (
+                      </div>
+                    )}
+                  {message.reactions &&
+                    typeof message.reactions === "object" && (
+                      <div className="mt-2 flex gap-1">
+                        {Object.entries(
+                          message.reactions as Record<string, string[]>,
+                        ).map(([emoji, users]) => (
                           <div
                             key={emoji}
                             className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-full text-sm cursor-pointer hover:bg-gray-200"
@@ -203,8 +219,8 @@ export default function MessageList({ channelId, userId }: Props) {
                             <span>{users.length}</span>
                           </div>
                         ))}
-                    </div>
-                  )}
+                      </div>
+                    )}
                 </div>
               </div>
             );
@@ -213,7 +229,11 @@ export default function MessageList({ channelId, userId }: Props) {
       </ScrollArea>
       <Separator />
       <div className="p-4">
-        <MessageInput channelId={channelId} userId={userId} />
+        <MessageInput
+          channelId={channelId}
+          userId={userId}
+          dmChatName={chatPartner?.username}
+        />
       </div>
     </div>
   );

@@ -10,9 +10,10 @@ import { useUser } from "@/hooks/use-user";
 type Props = {
   channelId: number | null;
   userId: number | null;
+  dmChatName: string | undefined;
 };
 
-export default function MessageInput({ channelId, userId }: Props) {
+export default function MessageInput({ channelId, userId, dmChatName }: Props) {
   const [content, setContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -24,7 +25,7 @@ export default function MessageInput({ channelId, userId }: Props) {
 
   const sendMessageMutation = useMutation({
     mutationFn: async (data: { content: string; files?: FileList }) => {
-      const url = userId 
+      const url = userId
         ? `/api/dm/${userId}`
         : `/api/channels/${channelId}/messages`;
 
@@ -103,9 +104,9 @@ export default function MessageInput({ channelId, userId }: Props) {
     });
   };
 
-  const placeholder = userId 
-    ? `Message ${user?.username || 'user'}`
-    : `Message ${channelId ? '#channel' : ''}`;
+  const placeholder = userId
+    ? `Message ${dmChatName}`
+    : `Message ${channelId ? "#channel" : ""}`;
 
   return (
     <form onSubmit={handleSubmit} className="flex gap-2">

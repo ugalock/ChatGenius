@@ -4,13 +4,16 @@ import { Separator } from "@/components/ui/separator";
 import ChannelList from "@/components/chat/ChannelList";
 import DirectMessages from "@/components/chat/DirectMessages";
 import MessageList from "@/components/chat/MessageList";
+import ProfileBar from "@/components/chat/ProfileBar";
 import UserList from "@/components/chat/UserList";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useUser } from "@/hooks/use-user";
 
 export default function ChatPage() {
   const { user, token } = useUser();
-  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(
+    null,
+  );
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   useWebSocket(user?.id, token);
 
@@ -40,17 +43,15 @@ export default function ChatPage() {
               selectedChannelId={selectedChannelId}
               onSelectChannel={handleChannelSelect}
             />
-            <DirectMessages 
+            <DirectMessages
               selectedUserId={selectedUserId}
               onSelectUser={handleUserSelect}
             />
+            <ProfileBar />
           </div>
         </ResizablePanel>
         <ResizablePanel defaultSize={60}>
-          <MessageList 
-            channelId={selectedChannelId} 
-            userId={selectedUserId}
-          />
+          <MessageList channelId={selectedChannelId} userId={selectedUserId} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

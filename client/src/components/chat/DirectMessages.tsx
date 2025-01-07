@@ -63,7 +63,7 @@ export default function DirectMessages({
                     }`}
                   />
                 </div>
-                <span className="truncate">{user.username}</span>
+                <span className="truncate ml-2">{user.username}</span>
               </div>
               <div className="flex items-center space-x-2">
                 {user.unreadCount > 0 && (

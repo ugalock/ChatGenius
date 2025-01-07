@@ -10,7 +10,7 @@ import {
   directMessages,
   users,
 } from "@db/schema";
-import { eq, and, or, desc } from "drizzle-orm";
+import { eq, and, or, desc, asc } from "drizzle-orm";
 import { log } from "./vite";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -75,6 +75,32 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // All channels API endpoint
+  app.get("/api/channels/all", requireAuth, async (req, res) => {
+    try {
+      log(`[API] Fetching all channels`);
+      const allChannels = await db
+        .select({
+          channel: channels,
+          isMember: sql<boolean>`EXISTS (
+            SELECT 1 FROM ${channelMembers}
+            WHERE ${channelMembers.channelId} = ${channels.id}
+            AND ${channelMembers.userId} = ${req.user!.id}
+          )`,
+        })
+        .from(channels)
+        .orderBy(desc(channels.createdAt));
+
+      res.json(allChannels.map(({ channel, isMember }) => ({
+        ...channel,
+        isMember,
+      })));
+    } catch (error) {
+      log(`[ERROR] Failed to fetch all channels: ${error}`);
+      res.status(500).json({ message: "Failed to fetch all channels" });
+    }
+  });
+
   app.post("/api/channels", async (req, res) => {
     try {
       // Validate request body
@@ -120,7 +146,7 @@ export function registerRoutes(app: Express): Server {
       // Notify other users about the new channel creation
       ws.broadcast({
         type: "channel_created",
-        payload: { channel }
+        payload: { channel },
       });
 
       res.status(201).json(channel);
@@ -144,7 +170,7 @@ export function registerRoutes(app: Express): Server {
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
           .where(eq(messages.channelId, parseInt(req.params.channelId)))
-          .orderBy(desc(messages.createdAt))
+          .orderBy(asc(messages.createdAt))
           .limit(50);
 
         res.json(
@@ -154,8 +180,8 @@ export function registerRoutes(app: Express): Server {
               id: user.id,
               username: user.username,
               avatar: user.avatar,
-              status: user.status
-            }
+              status: user.status,
+            },
           })),
         );
       } catch (error) {
@@ -196,14 +222,14 @@ export function registerRoutes(app: Express): Server {
             id: messageWithUser.user.id,
             username: messageWithUser.user.username,
             avatar: messageWithUser.user.avatar,
-            status: messageWithUser.user.status
-          }
+            status: messageWithUser.user.status,
+          },
         };
 
         // Send message through WebSocket with proper typing
         ws.broadcast({
           type: "message",
-          payload: fullMessage
+          payload: fullMessage,
         });
 
         res.json(fullMessage);
@@ -236,7 +262,7 @@ export function registerRoutes(app: Express): Server {
             ),
           ),
         )
-        .orderBy(desc(directMessages.createdAt))
+        .orderBy(asc(directMessages.createdAt))
         .limit(50);
 
       res.json(
@@ -246,9 +272,9 @@ export function registerRoutes(app: Express): Server {
             id: user.id,
             username: user.username,
             avatar: user.avatar,
-            status: user.status
-          }
-        }))
+            status: user.status,
+          },
+        })),
       );
     } catch (error) {
       log(`[ERROR] Failed to fetch direct messages: ${error}`);
@@ -284,14 +310,14 @@ export function registerRoutes(app: Express): Server {
           id: messageWithUser.user.id,
           username: messageWithUser.user.username,
           avatar: messageWithUser.user.avatar,
-          status: messageWithUser.user.status
-        }
+          status: messageWithUser.user.status,
+        },
       };
 
       // Send direct message through WebSocket
       ws.broadcast({
         type: "direct_message",
-        payload: fullMessage
+        payload: fullMessage,
       });
 
       res.json(fullMessage);
@@ -317,15 +343,17 @@ export function registerRoutes(app: Express): Server {
         .where(
           and(
             eq(directMessages.toUserId, req.user!.id),
-            eq(directMessages.isRead, false)
-          )
+            eq(directMessages.isRead, false),
+          ),
         )
         .groupBy(directMessages.fromUserId);
 
       // Map the unread counts to users
-      const usersWithUnread = allUsers.map(user => ({
+      const usersWithUnread = allUsers.map((user) => ({
         ...user,
-        unreadCount: unreadCounts.find(count => count.fromUserId === user.id)?.unreadCount || 0
+        unreadCount:
+          unreadCounts.find((count) => count.fromUserId === user.id)
+            ?.unreadCount || 0,
       }));
 
       res.json(usersWithUnread);
