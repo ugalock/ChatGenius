@@ -14,6 +14,18 @@ export default function ChatPage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   useWebSocket(user?.id, token);
 
+  // When selecting a channel, clear any selected user
+  const handleChannelSelect = (channelId: number) => {
+    setSelectedChannelId(channelId);
+    setSelectedUserId(null);
+  };
+
+  // When selecting a user for DM, clear any selected channel
+  const handleUserSelect = (userId: number) => {
+    setSelectedUserId(userId);
+    setSelectedChannelId(null);
+  };
+
   return (
     <div className="h-screen bg-gray-100">
       <ResizablePanelGroup direction="horizontal">
@@ -26,20 +38,20 @@ export default function ChatPage() {
             </div>
             <ChannelList
               selectedChannelId={selectedChannelId}
-              onSelectChannel={setSelectedChannelId}
+              onSelectChannel={handleChannelSelect}
             />
             <DirectMessages 
               selectedUserId={selectedUserId}
-              onSelectUser={setSelectedUserId}
+              onSelectUser={handleUserSelect}
             />
           </div>
         </ResizablePanel>
         <ResizablePanel defaultSize={60}>
-          <MessageList channelId={selectedChannelId} />
+          <MessageList 
+            channelId={selectedChannelId} 
+            userId={selectedUserId}
+          />
         </ResizablePanel>
-        {/* <ResizablePanel defaultSize={20} minSize={15}>
-          <UserList />
-        </ResizablePanel> */}
       </ResizablePanelGroup>
     </div>
   );

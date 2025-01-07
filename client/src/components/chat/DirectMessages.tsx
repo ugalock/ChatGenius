@@ -15,7 +15,10 @@ type Props = {
   onSelectUser: (userId: number) => void;
 };
 
-export default function DirectMessages({ selectedUserId, onSelectUser }: Props) {
+export default function DirectMessages({
+  selectedUserId,
+  onSelectUser,
+}: Props) {
   const { token, user: currentUser } = useUser();
 
   const { data: users } = useQuery<ExtendedUser[]>({
@@ -32,7 +35,7 @@ export default function DirectMessages({ selectedUserId, onSelectUser }: Props) 
   });
 
   // Filter out the current user from the list
-  const otherUsers = users?.filter(user => user.id !== currentUser?.id) || [];
+  const otherUsers = users?.filter((user) => user.id !== currentUser?.id) || [];
 
   return (
     <div className="p-4 border-b border-gray-700">
@@ -54,9 +57,9 @@ export default function DirectMessages({ selectedUserId, onSelectUser }: Props) 
                       {user.username[0].toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
-                  <div 
+                  <div
                     className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
-                      user.status === 'online' ? 'bg-green-500' : 'bg-gray-500'
+                      user.status === "online" ? "bg-green-500" : "bg-gray-500"
                     }`}
                   />
                 </div>
@@ -68,7 +71,6 @@ export default function DirectMessages({ selectedUserId, onSelectUser }: Props) 
                     {user.unreadCount}
                   </span>
                 )}
-                <MessageCircle className="h-4 w-4" />
               </div>
             </Button>
           ))}

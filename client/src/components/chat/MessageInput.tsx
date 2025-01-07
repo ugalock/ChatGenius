@@ -8,10 +8,11 @@ import { useWebSocket } from "@/hooks/use-websocket";
 import { useUser } from "@/hooks/use-user";
 
 type Props = {
-  channelId: number;
+  channelId: number | null;
+  userId: number | null;
 };
 
-export default function MessageInput({ channelId }: Props) {
+export default function MessageInput({ channelId, userId }: Props) {
   const [content, setContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -23,7 +24,11 @@ export default function MessageInput({ channelId }: Props) {
 
   const sendMessageMutation = useMutation({
     mutationFn: async (data: { content: string; files?: FileList }) => {
-      const response = await fetch(`/api/channels/${channelId}/messages`, {
+      const url = userId 
+        ? `/api/dm/${userId}`
+        : `/api/channels/${channelId}/messages`;
+
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -40,9 +45,14 @@ export default function MessageInput({ channelId }: Props) {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/channels", channelId, "messages"],
-      });
+      // Invalidate the appropriate query based on whether it's a DM or channel message
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/dm", userId] });
+      } else {
+        queryClient.invalidateQueries({
+          queryKey: ["/api/channels", channelId, "messages"],
+        });
+      }
       setContent("");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -61,7 +71,12 @@ export default function MessageInput({ channelId }: Props) {
   const handleTyping = () => {
     if (!isTyping) {
       setIsTyping(true);
-      sendMessage("typing", { channelId });
+      // Send typing indicator to the appropriate context
+      if (userId) {
+        sendMessage("typing_dm", { userId });
+      } else {
+        sendMessage("typing", { channelId });
+      }
     }
 
     if (typingTimeoutRef.current) {
@@ -88,6 +103,10 @@ export default function MessageInput({ channelId }: Props) {
     });
   };
 
+  const placeholder = userId 
+    ? `Message ${user?.username || 'user'}`
+    : `Message ${channelId ? '#channel' : ''}`;
+
   return (
     <form onSubmit={handleSubmit} className="flex gap-2">
       <input
@@ -97,7 +116,6 @@ export default function MessageInput({ channelId }: Props) {
         multiple
         accept="image/*,application/pdf"
         onChange={() => {
-          // Trigger form submission when files are selected
           if (fileInputRef.current?.files?.length) {
             handleSubmit(new Event("submit") as any);
           }
@@ -123,7 +141,7 @@ export default function MessageInput({ channelId }: Props) {
             handleSubmit(e);
           }
         }}
-        placeholder="Type a message..."
+        placeholder={placeholder}
         className="min-h-[44px] max-h-[200px]"
       />
       <Button
