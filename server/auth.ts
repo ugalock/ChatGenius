@@ -219,6 +219,12 @@ export function setupAuth(app: Express) {
           return res.status(400).send(info.message ?? "Login failed");
         }
 
+        // Update user status to online
+        await db
+          .update(users)
+          .set({ status: 'online' })
+          .where(eq(users.id, user.id));
+
         req.login(user, (err) => {
           if (err) {
             log(`[AUTH] Login session creation failed: ${err}`);
