@@ -1,6 +1,6 @@
 import passport from "passport";
 import { IVerifyOptions, Strategy as LocalStrategy } from "passport-local";
-import { type Express } from "express";
+import { type Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
@@ -35,12 +35,17 @@ declare global {
   }
 }
 
-// Create session store that can be exported
+// Create session store with optimized settings
 const MemoryStore = createMemoryStore(session);
 export const sessionStore = new MemoryStore({
-  checkPeriod: 86400000 * 7, // prune expired entries every 7 days
-  ttl: 86400000 * 7, // 7 days,
-  noDisposeOnSet: true // Prevent session disposal on set operations
+  checkPeriod: 86400000, // Prune expired entries every 24 hours
+  ttl: 86400000 * 30, // 30 days
+  noDisposeOnSet: true, // Prevent session disposal on set operations
+  stale: false, // Delete expired sessions
+  max: 1000, // Maximum number of sessions to store
+  dispose: function(key, value) {
+    log(`[AUTH] Session disposed: ${key}`);
+  }
 });
 
 // Track session store operations for debugging
@@ -59,10 +64,11 @@ sessionStore.on('destroy', (sid) => {
 // Export session settings for use in WebSocket
 export const sessionSettings: session.SessionOptions = {
   secret: process.env.REPL_ID || "chat-genius-secret",
-  resave: true,
-  saveUninitialized: true,
+  resave: false, // Only save session if data is modified
+  saveUninitialized: false, // Don't create session until something stored
+  rolling: true, // Reset maxAge on every response
   cookie: {
-    maxAge: 86400000 * 7, // 7 days
+    maxAge: 86400000 * 30, // 30 days to match store TTL
     httpOnly: true,
     secure: false, // Will be set to true in production
     path: '/',
@@ -70,7 +76,7 @@ export const sessionSettings: session.SessionOptions = {
   },
   store: sessionStore,
   name: "chat.sid",
-  rolling: true
+  unset: 'destroy' // Remove session from store when unset
 };
 
 export function setupAuth(app: Express) {
@@ -81,40 +87,9 @@ export function setupAuth(app: Express) {
   }
 
   // Add session middleware with detailed logging
-  const sessionMiddleware = session(sessionSettings);
-  app.use((req, res, next) => {
-    log(`[AUTH] Request start - Headers: ${JSON.stringify(req.headers)}`);
-    sessionMiddleware(req, res, () => {
-      log(`[AUTH] Session created/restored - ID: ${req.sessionID}`);
-      next();
-    });
-  });
-
+  app.use(session(sessionSettings)); 
   app.use(passport.initialize());
   app.use(passport.session());
-
-  // Debug middleware to track session lifecycle
-  app.use((req, res, next) => {
-    const prevSession = req.session;
-    const prevSessionID = req.sessionID;
-
-    log(
-      `[AUTH] Request start - Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, Cookie: ${req.headers.cookie}`,
-    );
-
-    // Track session changes during request
-    res.on('finish', () => {
-      if (prevSession !== req.session) {
-        log(`[AUTH] Session object changed during request. Old ID: ${prevSessionID}, New ID: ${req.sessionID}`);
-      }
-      if (prevSessionID !== req.sessionID) {
-        log(`[AUTH] Session ID changed during request. Old: ${prevSessionID}, New: ${req.sessionID}`);
-      }
-      log(`[AUTH] Request end - Final Session ID: ${req.sessionID}`);
-    });
-
-    next();
-  });
 
   passport.use(
     new LocalStrategy(async (username, password, done) => {
