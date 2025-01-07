@@ -13,7 +13,7 @@ export default function ChatPage() {
   useWebSocket(user?.id);
 
   return (
-    <div className="h-screen">
+    <div className="h-screen bg-gray-100">
       <ResizablePanelGroup direction="horizontal">
         <ResizablePanel defaultSize={20} minSize={15}>
           <ChannelList

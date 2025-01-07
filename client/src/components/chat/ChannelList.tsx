@@ -1,6 +1,7 @@
+
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Hash } from "lucide-react";
+import { Plus, Hash, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -46,52 +47,54 @@ export default function ChannelList({ selectedChannelId, onSelectChannel }: Prop
   });
 
   return (
-    <div className="h-full flex flex-col p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Channels</h2>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <Plus className="h-4 w-4" />
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Channel</DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={form.handleSubmit((data) => createChannel.mutate(data))}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <Label htmlFor="name">Channel Name</Label>
-                <Input
-                  id="name"
-                  {...form.register("name", { required: true })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
-                <Input
-                  id="description"
-                  {...form.register("description")}
-                />
-              </div>
-              <Button type="submit">Create</Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+    <div className="h-full flex flex-col bg-gray-800 text-white">
+      <div className="p-4 border-b border-gray-700">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">Channels</h2>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button variant="ghost" size="icon" className="text-white">
+                <Plus className="h-4 w-4" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create Channel</DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={form.handleSubmit((data) => createChannel.mutate(data))}
+                className="space-y-4"
+              >
+                <div className="space-y-2">
+                  <Label htmlFor="name">Channel Name</Label>
+                  <Input
+                    id="name"
+                    {...form.register("name", { required: true })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Input
+                    id="description"
+                    {...form.register("description")}
+                  />
+                </div>
+                <Button type="submit">Create</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 p-4">
         <div className="space-y-1">
           {channels?.map((channel) => (
             <Button
               key={channel.id}
               variant={channel.id === selectedChannelId ? "secondary" : "ghost"}
-              className="w-full justify-start"
+              className="w-full justify-start text-white hover:bg-gray-700"
               onClick={() => onSelectChannel(channel.id)}
             >
-              <Hash className="h-4 w-4 mr-2" />
+              <MessageCircle className="h-4 w-4 mr-2" />
               {channel.name}
             </Button>
           ))}
