@@ -1,14 +1,25 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { log } from "./vite";
+import type { Request } from "express";
+import { parse as parseCookie } from "cookie";
+import { sessionStore, sessionSettings } from "./auth";
+import type { SessionData } from "express-session";
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: number;
+  isAlive: boolean;
 }
 
 interface WSMessage {
   type: string;
   payload: any;
+}
+
+interface ExtendedSessionData extends SessionData {
+  passport?: {
+    user: number;
+  };
 }
 
 export function setupWebSocket(server: Server) {
@@ -28,8 +39,26 @@ export function setupWebSocket(server: Server) {
 
   const clients = new Map<number, ExtendedWebSocket>();
 
-  wss.on("connection", (ws: ExtendedWebSocket, req) => {
+  // Setup heartbeat to detect stale connections
+  const interval = setInterval(() => {
+    wss.clients.forEach((wsClient: WebSocket) => {
+      const ws = wsClient as ExtendedWebSocket;
+      if (!ws.isAlive) {
+        if (ws.userId) {
+          log(`[WS] Client ${ws.userId} failed heartbeat, terminating`);
+          clients.delete(ws.userId);
+        }
+        return ws.terminate();
+      }
+
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  wss.on("connection", async (ws: ExtendedWebSocket, req) => {
     log("[WS] New connection established");
+    ws.isAlive = true;
 
     // Skip chat-related setup for Vite HMR connections
     if (req.headers['sec-websocket-protocol'] === 'vite-hmr') {
@@ -37,42 +66,80 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
+    // Extract session from cookie
+    const cookieHeader = req.headers.cookie;
+    if (cookieHeader) {
+      const cookies = parseCookie(cookieHeader);
+      const sid = cookies[sessionSettings.name!];
+
+      if (sid) {
+        // Verify session
+        sessionStore.get(sid, (err, session: ExtendedSessionData | null) => {
+          if (err || !session?.passport?.user) {
+            log(`[WS] Invalid session for WebSocket connection`);
+            ws.close();
+            return;
+          }
+
+          const userId = session.passport.user;
+          log(`[WS] Session authenticated for user ${userId}`);
+
+          // Handle existing connection
+          const existingClient = clients.get(userId);
+          if (existingClient) {
+            log(`[WS] Closing existing connection for user ${userId}`);
+            existingClient.close();
+            clients.delete(userId);
+          }
+
+          // Set up new connection
+          ws.userId = userId;
+          clients.set(userId, ws);
+
+          // Send initial connection success
+          try {
+            ws.send(JSON.stringify({
+              type: "connected",
+              payload: { userId, message: "Connected to server" }
+            }));
+          } catch (error) {
+            log(`[WS] Error sending welcome message: ${error}`);
+          }
+        });
+      }
+    }
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
     // Setup chat WebSocket handlers
     ws.on("message", (data) => {
       try {
+        if (!ws.userId) {
+          throw new Error("Not authenticated");
+        }
+
         const message = JSON.parse(data.toString()) as WSMessage;
         log(`[WS] Received message type: ${message.type}`);
 
         switch (message.type) {
-          case "auth":
-            ws.userId = message.payload.userId;
-            clients.set(message.payload.userId, ws);
-            log(`[WS] User ${message.payload.userId} authenticated`);
-            broadcast({
-              type: "presence",
-              payload: { userId: message.payload.userId, status: "online" }
-            });
-            break;
-
-          case "message":
-            if (!ws.userId) {
-              throw new Error("Not authenticated");
-            }
-            broadcast({
-              type: "message",
-              payload: message.payload
-            });
-            break;
-
           case "typing":
-            if (!ws.userId) {
-              throw new Error("Not authenticated");
-            }
             broadcast({
               type: "typing",
               payload: {
                 userId: ws.userId,
                 channelId: message.payload.channelId
+              }
+            });
+            break;
+
+          case "message":
+            broadcast({
+              type: "message",
+              payload: {
+                ...message.payload,
+                userId: ws.userId
               }
             });
             break;
@@ -105,16 +172,10 @@ export function setupWebSocket(server: Server) {
         });
       }
     });
+  });
 
-    // Send initial connection success message
-    try {
-      ws.send(JSON.stringify({
-        type: "connected",
-        payload: { message: "Connected to server" }
-      }));
-    } catch (error) {
-      log(`[WS] Error sending welcome message: ${error}`);
-    }
+  wss.on('close', () => {
+    clearInterval(interval);
   });
 
   function broadcast(message: WSMessage, exclude?: number) {

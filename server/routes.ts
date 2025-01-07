@@ -10,7 +10,7 @@ import { z } from "zod";
 // Middleware to check authentication
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
-    log(`[ERROR] Unauthorized access attempt`);
+    log(`[ERROR] Unauthorized access attempt to ${req.path}`);
     return res.status(401).json({ message: "Unauthorized" });
   }
   next();
@@ -27,9 +27,14 @@ export function registerRoutes(app: Express): Server {
   const httpServer = createServer(app);
   const ws = setupWebSocket(httpServer);
 
-  // Channels - protected by auth middleware
-  app.get("/api/channels", requireAuth, async (req, res) => {
+  // Protected API routes - must be authenticated
+  app.use('/api/channels', requireAuth);
+  app.use('/api/users', requireAuth);
+
+  // Channels
+  app.get("/api/channels", async (req, res) => {
     try {
+      log(`[API] Fetching channels for user ${req.user!.id}`);
       const userChannels = await db
         .select({
           id: channels.id,
@@ -51,7 +56,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.post("/api/channels", requireAuth, async (req, res) => {
+  app.post("/api/channels", async (req, res) => {
     try {
       // Validate request body
       const result = createChannelSchema.safeParse(req.body);
@@ -214,7 +219,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Users
-  app.get("/api/users", requireAuth, async (req, res) => {
+  app.get("/api/users", async (req, res) => {
     try {
       const allUsers = await db.select().from(users);
       res.json(allUsers);

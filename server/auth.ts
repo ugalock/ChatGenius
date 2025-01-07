@@ -35,28 +35,32 @@ declare global {
   }
 }
 
-export function setupAuth(app: Express) {
-  const MemoryStore = createMemoryStore(session);
-  const sessionSettings: session.SessionOptions = {
-    secret: process.env.REPL_ID || "chat-genius-secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      maxAge: 86400000 * 7, // 7 days
-      httpOnly: true,
-      secure: false, // Will be set to true in production
-      sameSite: 'lax',
-      path: '/'
-    },
-    store: new MemoryStore({
-      checkPeriod: 86400000, // prune expired entries every 24h
-      ttl: 86400000 * 7, // 7 days
-      stale: false
-    }),
-    name: 'chat.sid',
-    rolling: true // Refresh cookie on each request
-  };
+// Create session store that can be exported
+const MemoryStore = createMemoryStore(session);
+export const sessionStore = new MemoryStore({
+  checkPeriod: 86400000, // prune expired entries every 24h
+  ttl: 86400000 * 7, // 7 days
+});
 
+// Export session settings for use in WebSocket
+export const sessionSettings: session.SessionOptions = {
+  secret: process.env.REPL_ID || "chat-genius-secret",
+  resave: true, // Changed to true to ensure session is saved
+  saveUninitialized: true, // Changed to true to ensure new sessions are saved
+  cookie: {
+    maxAge: 86400000 * 7, // 7 days
+    httpOnly: true,
+    secure: false, // Will be set to true in production
+    sameSite: 'lax',
+    path: '/'
+  },
+  store: sessionStore,
+  name: 'chat.sid',
+  rolling: true // Refresh cookie on each request
+};
+
+export function setupAuth(app: Express) {
+  // Set session settings based on environment
   if (app.get("env") === "production") {
     app.set("trust proxy", 1);
     sessionSettings.cookie!.secure = true;
