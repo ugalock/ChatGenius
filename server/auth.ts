@@ -57,9 +57,6 @@ export const sessionSettings: session.SessionOptions = {
     maxAge: 86400000 * 30, // 30 days
     path: "/",
     sameSite: "none", // Allow cross-site cookies
-    domain: process.env.REPL_SLUG
-      ? `.${process.env.REPL_SLUG}.repl.co`
-      : undefined,
   },
   store: sessionStore,
   saveUninitialized: false, // Don't create session until something stored
