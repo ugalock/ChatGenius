@@ -36,9 +36,9 @@ export default function ChannelList({
   const { token } = useUser();
 
   const { data: channels } = useQuery<ExtendedChannel[]>({
-    queryKey: ["/api/channels/all"],
+    queryKey: ["/api/channels"],
     queryFn: async () => {
-      const response = await fetch("/api/channels/all", {
+      const response = await fetch("/api/channels", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -67,7 +67,7 @@ export default function ChannelList({
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/channels/all"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
       setOpen(false);
       form.reset();
     },

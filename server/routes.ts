@@ -42,11 +42,14 @@ export function registerRoutes(app: Express): Server {
           isPrivate: channels.isPrivate,
           createdAt: channels.createdAt,
           createdById: channels.createdById,
+          isMember: sql<boolean>`EXISTS (
+          SELECT 1 FROM ${channelMembers}
+          WHERE ${channelMembers.channelId} = ${channels.id}
+          AND ${channelMembers.userId} = ${req.user!.id}
+        )`,
         })
         .from(channels)
-        .innerJoin(channelMembers, eq(channels.id, channelMembers.channelId))
-        .where(eq(channelMembers.userId, req.user!.id))
-        .orderBy(desc(channels.createdAt));
+        .orderBy(asc(channels.createdAt));
 
       res.json(userChannels);
     } catch (error) {
@@ -94,7 +97,7 @@ export function registerRoutes(app: Express): Server {
           )`,
         })
         .from(channels)
-        .orderBy(desc(channels.createdAt));
+        .orderBy(asc(channels.createdAt));
 
       res.json(allChannels);
     } catch (error) {
