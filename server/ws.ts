@@ -52,7 +52,6 @@ export function setupWebSocket(server: Server) {
           return done(true);
         }
 
-        // Get userId from URL parameters
         const url = new URL(req.url || "", "ws://localhost");
         const userId = url.searchParams.get("userId");
 
@@ -62,10 +61,9 @@ export function setupWebSocket(server: Server) {
           return;
         }
 
-        // Log the incoming request headers for debugging
         log(`[WS] Incoming connection request headers: ${JSON.stringify(req.headers)}`);
-
         const cookieHeader = req.headers.cookie;
+
         if (!cookieHeader) {
           log("[WS] No cookie header found in request");
           done(false, 401, "Unauthorized");
@@ -73,19 +71,18 @@ export function setupWebSocket(server: Server) {
         }
 
         try {
-          const cookies = parseCookie(cookieHeader);
-          const sid = cookies[sessionSettings.name];
+          const cookies = parseCookie(cookieHeader || "");
+          const sidCookie = cookies[sessionSettings.name || "chat.sid"];
 
-          if (!sid) {
-            log(`[WS] No session ID found in cookies. Cookie name: ${sessionSettings.name}`);
-            log(`[WS] Available cookies: ${JSON.stringify(cookies)}`);
+          if (!sidCookie) {
+            log(`[WS] No session ID found in cookies`);
             done(false, 401, "Unauthorized");
             return;
           }
 
           // Convert callback to Promise for better async handling
           const session = await new Promise<ExtendedSessionData | null>((resolve, reject) => {
-            sessionStore.get(sid, (err, session) => {
+            sessionStore.get(sidCookie, (err, session) => {
               if (err) {
                 reject(err);
                 return;
@@ -95,14 +92,13 @@ export function setupWebSocket(server: Server) {
           });
 
           if (!session) {
-            log(`[WS] No session found for ID: ${sid}`);
+            log(`[WS] No session found for ID: ${sidCookie}`);
             done(false, 401, "Session not found");
             return;
           }
 
           if (!session.passport?.user) {
             log(`[WS] Invalid session: No user found in session data`);
-            log(`[WS] Session data: ${JSON.stringify(session)}`);
             done(false, 401, "Unauthorized");
             return;
           }

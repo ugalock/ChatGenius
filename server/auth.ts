@@ -35,78 +35,71 @@ declare global {
   }
 }
 
-// Create session store with optimized settings
 const MemoryStore = createMemoryStore(session);
 export const sessionStore = new MemoryStore({
-  checkPeriod: 86400000, // Prune expired entries every 24 hours
+  checkPeriod: 86400000, // Prune expired entries every 24h
   ttl: 86400000 * 30, // 30 days
-  noDisposeOnSet: true, // Prevent session disposal on set operations
   stale: false, // Delete expired sessions
   max: 1000, // Maximum number of sessions to store
-  dispose: function(key, value) {
+  dispose: function(key) {
     log(`[AUTH] Session disposed: ${key}`);
-  }
+  },
+  noDisposeOnSet: true,
 });
 
-// Track session store operations for debugging
-sessionStore.on('set', (sid) => {
-  log(`[AUTH] Session stored: ${sid}`);
-});
-
-sessionStore.on('get', (sid) => {
-  log(`[AUTH] Session retrieved: ${sid}`);
-});
-
-sessionStore.on('destroy', (sid) => {
-  log(`[AUTH] Session destroyed: ${sid}`);
-});
-
-// Export session settings for use in WebSocket
+// Export session settings for WebSocket usage
 export const sessionSettings: session.SessionOptions = {
   secret: process.env.REPL_ID || "chat-genius-secret",
-  resave: false, // Only save session if data is modified
-  saveUninitialized: false, // Don't create session until something stored
-  rolling: true, // Reset maxAge on every response
+  name: "chat.sid",
   cookie: {
-    maxAge: 86400000 * 30, // 30 days to match store TTL
     httpOnly: true,
     secure: false, // Will be set to true in production
+    maxAge: 86400000 * 30, // 30 days
     path: '/',
     sameSite: 'lax'
   },
   store: sessionStore,
-  name: "chat.sid",
-  unset: 'destroy' // Remove session from store when unset
+  saveUninitialized: false, // Don't create session until something stored
+  resave: false, // Don't save session if unmodified
+  unset: 'destroy', // Remove session from store when .destroy() is called
+  rolling: true, // Force a new session identifier and reset expiration on every response
+  proxy: true // Trust the reverse proxy
 };
 
 export function setupAuth(app: Express) {
-  // Set session settings based on environment
+  // Set secure cookies in production
   if (app.get("env") === "production") {
     app.set("trust proxy", 1);
     sessionSettings.cookie!.secure = true;
   }
 
-  // Add session middleware first
+  // Initialize session middleware first
   app.use(session(sessionSettings));
 
   // Initialize passport after session
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Add request logging middleware
+  // Session debugging middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
-    // Log session information at the start of each request
     log(`[AUTH] Request ${req.method} ${req.path}`);
     log(`[AUTH] Session ID: ${req.sessionID}`);
     log(`[AUTH] Is Authenticated: ${req.isAuthenticated()}`);
     log(`[AUTH] Cookie Header: ${req.headers.cookie}`);
 
-    // Track session changes
-    const originalEnd = res.end;
-    res.end = function(this: Response) {
-      log(`[AUTH] Request completed - Final session ID: ${req.sessionID}`);
-      return originalEnd.apply(this, arguments);
-    } as typeof res.end;
+    // Ensure proper cookie handling
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Save session before sending response
+    if (req.session) {
+      req.session.save((err) => {
+        if (err) {
+          log(`[AUTH] Error saving session: ${err}`);
+        } else {
+          log(`[AUTH] Session saved successfully`);
+        }
+      });
+    }
 
     next();
   });
@@ -130,12 +123,6 @@ export function setupAuth(app: Express) {
           log(`[AUTH] Login failed: Incorrect password - ${username}`);
           return done(null, false, { message: "Incorrect password." });
         }
-
-        // Update user status to online
-        await db
-          .update(users)
-          .set({ status: "online" })
-          .where(eq(users.id, user.id));
 
         log(`[AUTH] Login successful: ${username}`);
         return done(null, user);
@@ -172,54 +159,14 @@ export function setupAuth(app: Express) {
     }
   });
 
-  app.post("/api/login", (req, res, next) => {
-    passport.authenticate(
-      "local",
-      (err: any, user: Express.User, info: IVerifyOptions) => {
-        if (err) {
-          log(`[AUTH] Login error: ${err}`);
-          return next(err);
-        }
-
-        if (!user) {
-          log(`[AUTH] Login failed: ${info.message}`);
-          return res.status(400).send(info.message ?? "Login failed");
-        }
-
-        req.login(user, async (err) => {
-          if (err) {
-            log(`[AUTH] Login session creation failed: ${err}`);
-            return next(err);
-          }
-
-          log(`[AUTH] Login successful: ${user.username}`);
-          return res.json({
-            message: "Login successful",
-            user: { id: user.id, username: user.username },
-          });
-        });
-      },
-    )(req, res, next);
-  });
-
   app.post("/api/register", async (req, res, next) => {
     try {
-      //This part needs to be updated based on the new schema.  The original code used insertUserSchema, which is missing in the edited code.
-      //  Without knowing the new schema, I cannot provide a complete and correct implementation here.  The original code will be preserved
-      const result =  {success: false, data: {username: '', password: ''}, error: {issues: []}}; // Placeholder - needs update based on new schema
-      if (!result.success) {
-        log(
-          `[AUTH] Registration validation failed: ${result.error.issues.map((i) => i.message).join(", ")}`,
-        );
-        return res
-          .status(400)
-          .send(
-            "Invalid input: " +
-              result.error.issues.map((i) => i.message).join(", "),
-          );
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        return res.status(400).send("Username and password are required");
       }
 
-      const { username, password } = result.data;
       const [existingUser] = await db
         .select()
         .from(users)
@@ -237,11 +184,11 @@ export function setupAuth(app: Express) {
         .values({
           username,
           password: hashedPassword,
-          status: "online",
         })
         .returning();
 
       log(`[AUTH] Registration successful: ${username}`);
+
       req.login(newUser, (err) => {
         if (err) {
           log(`[AUTH] Auto-login after registration failed: ${err}`);
@@ -258,17 +205,47 @@ export function setupAuth(app: Express) {
     }
   });
 
-  app.post("/api/logout", async (req, res) => {
+  app.post("/api/login", (req, res, next) => {
+    passport.authenticate(
+      "local",
+      (err: any, user: Express.User, info: IVerifyOptions) => {
+        if (err) {
+          log(`[AUTH] Login error: ${err}`);
+          return next(err);
+        }
+
+        if (!user) {
+          log(`[AUTH] Login failed: ${info.message}`);
+          return res.status(400).send(info.message ?? "Login failed");
+        }
+
+        req.login(user, (err) => {
+          if (err) {
+            log(`[AUTH] Login session creation failed: ${err}`);
+            return next(err);
+          }
+
+          // Save session immediately after login
+          req.session!.save((err) => {
+            if (err) {
+              log(`[AUTH] Error saving session after login: ${err}`);
+              return next(err);
+            }
+
+            log(`[AUTH] Login successful: ${user.username}`);
+            return res.json({
+              message: "Login successful",
+              user: { id: user.id, username: user.username },
+            });
+          });
+        });
+      },
+    )(req, res, next);
+  });
+
+  app.post("/api/logout", (req, res) => {
     if (req.user) {
-      try {
-        await db
-          .update(users)
-          .set({ status: "offline" })
-          .where(eq(users.id, req.user.id));
-        log(`[AUTH] User status set to offline: ${req.user.id}`);
-      } catch (error) {
-        log(`[AUTH] Error updating user status on logout: ${error}`);
-      }
+      log(`[AUTH] Logging out user: ${req.user.id}`);
     }
 
     req.logout((err) => {
@@ -276,8 +253,17 @@ export function setupAuth(app: Express) {
         log(`[AUTH] Logout failed: ${err}`);
         return res.status(500).send("Logout failed");
       }
-      log(`[AUTH] Logout successful`);
-      res.json({ message: "Logout successful" });
+
+      req.session!.destroy((err) => {
+        if (err) {
+          log(`[AUTH] Error destroying session: ${err}`);
+          return res.status(500).send("Logout failed");
+        }
+
+        res.clearCookie(sessionSettings.name!);
+        log(`[AUTH] Logout successful`);
+        res.json({ message: "Logout successful" });
+      });
     });
   });
 
@@ -287,6 +273,6 @@ export function setupAuth(app: Express) {
       return res.json(req.user);
     }
     log(`[AUTH] Unauthorized access to /api/user`);
-    res.status(401).end();
+    res.status(401).send("Not logged in");
   });
 }
