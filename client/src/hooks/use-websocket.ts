@@ -14,11 +14,11 @@ export function useWebSocket(userId: number | undefined) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
 
-      // Create WebSocket URL and ensure credentials are included
-      const wsUrl = new URL(`${protocol}//${host}/ws`);
-      wsUrl.searchParams.set('userId', userId.toString());
+      // Create WebSocket URL with userId as a query parameter for authentication
+      const wsUrl = `${protocol}//${host}/ws?userId=${userId}`;
+      console.log('[WS] Connecting to:', wsUrl);
 
-      // Create WebSocket with credentials support
+      // Create WebSocket
       const websocket = new WebSocket(wsUrl);
       websocket.addEventListener('open', () => {
         console.log('[WS] WebSocket connected, sending auth check');
@@ -65,10 +65,18 @@ export function useWebSocket(userId: number | undefined) {
               queryClient.invalidateQueries({
                 queryKey: ["/api/dm", data.payload.fromUserId]
               });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.toUserId]
+              });
               break;
             case "presence":
               queryClient.invalidateQueries({
                 queryKey: ["/api/users"]
+              });
+              break;
+            case "channel_created":
+              queryClient.invalidateQueries({
+                queryKey: ["/api/channels"]
               });
               break;
             case "error":

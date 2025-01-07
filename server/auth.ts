@@ -45,13 +45,13 @@ export const sessionStore = new MemoryStore({
 // Export session settings for use in WebSocket
 export const sessionSettings: session.SessionOptions = {
   secret: process.env.REPL_ID || "chat-genius-secret",
-  resave: true,
-  saveUninitialized: true,
+  resave: false,
+  saveUninitialized: false,
   cookie: {
     maxAge: 86400000 * 7, // 7 days
     httpOnly: true,
-    secure: false, // Will be set to true in production
-    sameSite: 'none', // Changed from 'lax' to 'none' to allow WebSocket cross-origin
+    secure: false, // Set to false in development
+    sameSite: 'lax', // Changed from 'none' to 'lax' for better cookie persistence
     path: '/'
   },
   store: sessionStore,
