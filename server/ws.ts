@@ -2,6 +2,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { log } from "./vite";
 import { verifyAuthToken } from "./auth";
+import { db } from "@db";
+import { users } from "@db/schema";
+import { eq } from "drizzle-orm";
 import { URL } from "url";
 
 interface ExtendedWebSocket extends WebSocket {
@@ -77,6 +80,9 @@ export function setupWebSocket(server: Server) {
       if (!ws.isAlive) {
         if (ws.userId) {
           log(`[WS] Client ${ws.userId} failed heartbeat, terminating`);
+          db.update(users)
+            .set({ status: "offline" })
+            .where(eq(users.id, ws.userId));
           clients.delete(ws.userId);
         }
         return ws.terminate();
@@ -125,7 +131,7 @@ export function setupWebSocket(server: Server) {
         JSON.stringify({
           type: "connected",
           payload: { userId, message: "Connected to server" },
-        })
+        }),
       );
     } catch (error) {
       log(`[WS] Error sending welcome message: ${error}`);
@@ -142,7 +148,9 @@ export function setupWebSocket(server: Server) {
         }
 
         const message = JSON.parse(data.toString()) as WSMessage;
-        log(`[WS] Received message type: ${message.type} from user ${ws.userId}`);
+        log(
+          `[WS] Received message type: ${message.type} from user ${ws.userId}`,
+        );
 
         // Handle auth check message type
         if (message.type === "auth_check") {
@@ -153,8 +161,11 @@ export function setupWebSocket(server: Server) {
                 userId: ws.userId,
                 message: "Authentication successful",
               },
-            })
+            }),
           );
+          db.update(users)
+            .set({ status: "online" })
+            .where(eq(users.id, ws.userId));
           return;
         }
 
@@ -166,9 +177,12 @@ export function setupWebSocket(server: Server) {
             JSON.stringify({
               type: "error",
               payload: {
-                message: error instanceof Error ? error.message : "Invalid message format",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Invalid message format",
               },
-            })
+            }),
           );
         }
       }
@@ -181,6 +195,9 @@ export function setupWebSocket(server: Server) {
     ws.on("close", () => {
       if (ws.userId) {
         log(`[WS] User ${ws.userId} disconnected`);
+        db.update(users)
+          .set({ status: "offline" })
+          .where(eq(users.id, ws.userId));
         clients.delete(ws.userId);
         broadcast({
           type: "presence",

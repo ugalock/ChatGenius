@@ -7,7 +7,7 @@ import { users, type SelectUser } from "@db/schema";
 import { db } from "@db";
 import { eq } from "drizzle-orm";
 import { log } from "./vite";
-import jwt from 'jsonwebtoken';
+import jwt from "jsonwebtoken";
 
 const scryptAsync = promisify(scrypt);
 const crypto = {
@@ -35,8 +35,9 @@ declare global {
 }
 
 // JWT Configuration
-const JWT_SECRET = process.env.JWT_SECRET || process.env.REPL_ID || "chat-genius-secret";
-const JWT_EXPIRES_IN = '30d';
+const JWT_SECRET =
+  process.env.JWT_SECRET || process.env.REPL_ID || "chat-genius-secret";
+const JWT_EXPIRES_IN = "30d";
 
 function generateJWT(userId: number): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -55,14 +56,14 @@ function verifyJWT(token: string): number | null {
 // Middleware to verify JWT
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'No token provided' });
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
   const userId = verifyJWT(token);
   if (!userId) {
-    return res.status(401).json({ message: 'Invalid token' });
+    return res.status(401).json({ message: "Invalid token" });
   }
 
   // Add userId to request for use in routes
@@ -100,7 +101,7 @@ export function setupAuth(app: Express) {
         log(`[AUTH] Login error: ${err}`);
         return done(err);
       }
-    })
+    }),
   );
 
   app.post("/api/register", async (req, res, next) => {
@@ -139,7 +140,7 @@ export function setupAuth(app: Express) {
       return res.json({
         message: "Registration successful",
         user: { id: newUser.id, username: newUser.username },
-        token
+        token,
       });
     } catch (error) {
       log(`[AUTH] Registration error: ${error}`);
@@ -168,9 +169,9 @@ export function setupAuth(app: Express) {
         return res.json({
           message: "Login successful",
           user: { id: user.id, username: user.username },
-          token
+          token,
         });
-      }
+      },
     )(req, res, next);
   });
 

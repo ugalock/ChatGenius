@@ -17,24 +17,20 @@ export default function MessageInput({ channelId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const { toast } = useToast();
-  const { sendMessage } = useWebSocket(useUser().user?.id);
+  const { user, token } = useUser();
+  const { sendMessage } = useWebSocket(user?.id, token);
   const queryClient = useQueryClient();
 
   const sendMessageMutation = useMutation({
     mutationFn: async (data: { content: string; files?: FileList }) => {
-      const formData = new FormData();
-      formData.append("content", data.content);
-      
-      if (data.files) {
-        for (let i = 0; i < data.files.length; i++) {
-          formData.append("files", data.files[i]);
-        }
-      }
-
       const response = await fetch(`/api/channels/${channelId}/messages`, {
         method: "POST",
-        body: formData,
-        credentials: "include"
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(data),
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -45,7 +41,7 @@ export default function MessageInput({ channelId }: Props) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ["/api/channels", channelId, "messages"]
+        queryKey: ["/api/channels", channelId, "messages"],
       });
       setContent("");
       if (fileInputRef.current) {
@@ -55,10 +51,11 @@ export default function MessageInput({ channelId }: Props) {
     onError: (error) => {
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to send message",
-        variant: "destructive"
+        description:
+          error instanceof Error ? error.message : "Failed to send message",
+        variant: "destructive",
       });
-    }
+    },
   });
 
   const handleTyping = () => {
@@ -78,13 +75,16 @@ export default function MessageInput({ channelId }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() && (!fileInputRef.current?.files || !fileInputRef.current.files.length)) {
+    if (
+      !content.trim() &&
+      (!fileInputRef.current?.files || !fileInputRef.current.files.length)
+    ) {
       return;
     }
 
     sendMessageMutation.mutate({
       content,
-      files: fileInputRef.current?.files || undefined
+      files: fileInputRef.current?.files || undefined,
     });
   };
 
@@ -126,7 +126,11 @@ export default function MessageInput({ channelId }: Props) {
         placeholder="Type a message..."
         className="min-h-[44px] max-h-[200px]"
       />
-      <Button type="submit" size="icon" disabled={sendMessageMutation.isPending}>
+      <Button
+        type="submit"
+        size="icon"
+        disabled={sendMessageMutation.isPending}
+      >
         <Send className="h-5 w-5" />
       </Button>
     </form>

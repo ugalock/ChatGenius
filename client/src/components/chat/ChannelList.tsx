@@ -47,7 +47,10 @@ export default function ChannelList({
     mutationFn: async (data: { name: string; description: string }) => {
       const response = await fetch("/api/channels", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(data),
         credentials: "include",
       });
@@ -66,10 +69,26 @@ export default function ChannelList({
   });
 
   return (
-    <div className="h-full flex flex-col bg-gray-800 text-white">
-      <div className="p-4 border-b border-gray-700">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">Channels</h2>
+    <div className="p-4 border-b border-gray-700">
+      <h2 className="mb-2 text-gray-400 uppercase text-sm">Channels</h2>
+      <ScrollArea className="flex-1">
+        <div className="space-y-1 items-left">
+          {channels?.map((channel) => (
+            <Button
+              key={channel.id}
+              variant={channel.id === selectedChannelId ? "ghost" : "ghost"}
+              className="flex items-center mb-2 cursor-pointer hover:bg-gray-700 rounded"
+              onClick={() => onSelectChannel(channel.id)}
+            >
+              <MessageCircle className="h-4 w-4 mr-2" />
+              <span>{channel.name}</span>
+              {channel.unread && channel.unread > 0 && (
+                <span className="ml-auto bg-blue-500 rounded-full px-2 py-1 text-xs">
+                  {channel.unread}
+                </span>
+              )}
+            </Button>
+          ))}
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button variant="ghost" size="icon" className="text-white">
@@ -101,21 +120,6 @@ export default function ChannelList({
               </form>
             </DialogContent>
           </Dialog>
-        </div>
-      </div>
-      <ScrollArea className="flex-1 p-4">
-        <div className="space-y-1">
-          {channels?.map((channel) => (
-            <Button
-              key={channel.id}
-              variant={channel.id === selectedChannelId ? "secondary" : "ghost"}
-              className="w-full justify-start text-white hover:bg-gray-700"
-              onClick={() => onSelectChannel(channel.id)}
-            >
-              <MessageCircle className="h-4 w-4 mr-2" />
-              {channel.name}
-            </Button>
-          ))}
         </div>
       </ScrollArea>
     </div>

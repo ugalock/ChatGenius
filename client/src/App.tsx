@@ -5,15 +5,15 @@ import ChatPage from "./pages/ChatPage";
 import { useUser } from "./hooks/use-user";
 
 function App() {
-  const { user, isLoading } = useUser();
+  const { user } = useUser();
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  // if (isLoading) {
+  //   return (
+  //     <div className="flex items-center justify-center min-h-screen bg-background">
+  //       <Loader2 className="h-8 w-8 animate-spin text-primary" />
+  //     </div>
+  //   );
+  // }
 
   // If no user, show auth page
   if (!user) {

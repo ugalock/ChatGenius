@@ -1,4 +1,3 @@
-
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
@@ -20,11 +19,20 @@ type Props = {
 
 export default function MessageList({ channelId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { user } = useUser();
+  const { user, token } = useUser();
 
   const { data: messages } = useQuery<ExtendedMessage[]>({
     queryKey: ["/api/channels", channelId, "messages"],
-    enabled: !!channelId
+    queryFn: async () => {
+      const response = await fetch(`/api/channels/${channelId}/messages`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch channels");
+      return response.json();
+    },
+    enabled: !!channelId,
   });
 
   useEffect(() => {
@@ -62,9 +70,12 @@ export default function MessageList({ channelId }: Props) {
         <div className="space-y-4">
           {messages?.map((message, i) => {
             const previousMessage = messages[i - 1];
-            const showHeader = !previousMessage || 
+            const showHeader =
+              !previousMessage ||
               previousMessage.userId !== message.userId ||
-              new Date(message.createdAt!).getTime() - new Date(previousMessage.createdAt!).getTime() > 300000;
+              new Date(message.createdAt!).getTime() -
+                new Date(previousMessage.createdAt!).getTime() >
+                300000;
 
             return (
               <div key={message.id} className="group">
@@ -81,7 +92,11 @@ export default function MessageList({ channelId }: Props) {
                         {message.user.username}
                       </span>
                       <span className="text-sm text-gray-500">
-                        {formatDistance(new Date(message.createdAt!), new Date(), { addSuffix: true })}
+                        {formatDistance(
+                          new Date(message.createdAt!),
+                          new Date(),
+                          { addSuffix: true },
+                        )}
                       </span>
                     </div>
                   </div>
@@ -90,7 +105,9 @@ export default function MessageList({ channelId }: Props) {
                   <p className="text-gray-800">{message.content}</p>
                   {message.attachments && (
                     <div className="mt-2 space-y-2">
-                      {Object.entries(message.attachments as Record<string, string>).map(([name, url]) => (
+                      {Object.entries(
+                        message.attachments as Record<string, string>,
+                      ).map(([name, url]) => (
                         <a
                           key={name}
                           href={url}
@@ -105,7 +122,9 @@ export default function MessageList({ channelId }: Props) {
                   )}
                   {message.reactions && (
                     <div className="mt-2 flex gap-1">
-                      {Object.entries(message.reactions as Record<string, string[]>).map(([emoji, users]) => (
+                      {Object.entries(
+                        message.reactions as Record<string, string[]>,
+                      ).map(([emoji, users]) => (
                         <div
                           key={emoji}
                           className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-full text-sm cursor-pointer hover:bg-gray-200"

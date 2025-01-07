@@ -3,14 +3,25 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import type { User } from "@db/schema";
+import { useUser } from "@/hooks/use-user";
 
 export default function UserList() {
+  const { token } = useUser();
   const { data: users } = useQuery<User[]>({
-    queryKey: ["/api/users"]
+    queryKey: ["/api/users"],
+    queryFn: async () => {
+      const response = await fetch("/api/users", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch users");
+      return response.json();
+    },
   });
 
-  const onlineUsers = users?.filter(user => user.status === "online") || [];
-  const offlineUsers = users?.filter(user => user.status === "offline") || [];
+  const onlineUsers = users?.filter((user) => user.status === "online") || [];
+  const offlineUsers = users?.filter((user) => user.status === "offline") || [];
 
   return (
     <div className="h-full p-4">
