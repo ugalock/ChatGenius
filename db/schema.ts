@@ -97,6 +97,23 @@ export const directMessages = pgTable("direct_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const messageReads = pgTable(
+  "message_reads",
+  {
+    id: serial("id").primaryKey(),
+    messageId: integer("message_id")
+      .references(() => messages.id)
+      .notNull(),
+    userId: integer("user_id")
+      .references(() => users.id)
+      .notNull(),
+    readAt: timestamp("read_at").defaultNow(),
+  },
+  (table) => ({
+    messageUserUnique: unique().on(table.messageId, table.userId),
+  }),
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   messages: many(messages),
   channelMemberships: many(channelMembers),
@@ -129,6 +146,7 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
     references: [messages.id],
   }),
   replies: many(messages),
+  reads: many(messageReads),
   unreadTracking: many(channelUnreads, { relationName: "lastReadMessage" }),
 }));
 
@@ -147,6 +165,17 @@ export const channelUnreadsRelations = relations(channelUnreads, ({ one }) => ({
   }),
 }));
 
+export const messageReadsRelations = relations(messageReads, ({ one }) => ({
+  message: one(messages, {
+    fields: [messageReads.messageId],
+    references: [messages.id],
+  }),
+  user: one(users, {
+    fields: [messageReads.userId],
+    references: [users.id],
+  }),
+}));
+
 export const insertUserSchema = createInsertSchema(users, {
   username: z.string().min(3).max(50),
   password: z.string().min(6),
@@ -161,6 +190,8 @@ export const insertMessageSchema = createInsertSchema(messages);
 export const selectMessageSchema = createSelectSchema(messages);
 export const insertChannelUnreadSchema = createInsertSchema(channelUnreads);
 export const selectChannelUnreadSchema = createSelectSchema(channelUnreads);
+export const insertMessageReadSchema = createInsertSchema(messageReads);
+export const selectMessageReadSchema = createSelectSchema(messageReads);
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
@@ -169,3 +200,4 @@ export type Channel = typeof channels.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type DirectMessage = typeof directMessages.$inferSelect;
 export type ChannelUnread = typeof channelUnreads.$inferSelect;
+export type MessageRead = typeof messageReads.$inferSelect;

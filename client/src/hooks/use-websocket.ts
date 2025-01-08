@@ -68,6 +68,15 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
                 queryKey: ["/api/channels/all"],
               });
               break;
+            case "message_read":
+              // Invalidate both channel messages and channel list to update read status
+              queryClient.invalidateQueries({
+                queryKey: ["/api/channels", data.payload.channelId, "messages"],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/channels/all"],
+              });
+              break;
             case "direct_message":
               queryClient.invalidateQueries({
                 queryKey: ["/api/dm", data.payload.fromUserId],
@@ -106,7 +115,7 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
         ws.current.close();
       }
     };
-  }, [userId, queryClient]);
+  }, [userId, token, queryClient]);
 
   const sendMessage = (type: string, payload: any) => {
     if (ws.current?.readyState === WebSocket.OPEN) {

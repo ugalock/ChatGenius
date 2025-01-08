@@ -143,20 +143,22 @@ export default function MessageList({ channelId, userId }: Props) {
 
     lastReadRef.current = messageId;
     try {
-      const response = await fetch(`/api/channels/${channelId}/read`, {
+      console.log(`Marking message ${messageId} as read`);
+      const response = await fetch(`/api/messages/${messageId}/read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ messageId }),
       });
 
       if (!response.ok) {
-        console.error('Failed to update last read message');
+        console.error('Failed to mark message as read:', await response.text());
+      } else {
+        console.log(`Successfully marked message ${messageId} as read`);
       }
     } catch (error) {
-      console.error('Error updating last read message:', error);
+      console.error('Error marking message as read:', error);
     }
   }, [channelId, token]);
 
@@ -166,29 +168,56 @@ export default function MessageList({ channelId, userId }: Props) {
 
     const options: IntersectionObserverInit = {
       root: document.getElementById('scroll-container'),
+      // Using multiple thresholds for more granular visibility detection
       threshold: [0.3, 0.5, 0.7],
-      rootMargin: '100px',
+      // Add margin to start observing before elements are fully in view
+      rootMargin: '20px 0px',
     };
 
     const handleIntersection = (entries: IntersectionObserverEntry[]) => {
       entries.forEach((entry) => {
         const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
+        // Only mark as read if message is significantly visible (50% or more)
         if (entry.intersectionRatio >= 0.5 && messageId && channelId) {
-          updateLastRead(messageId);
+          console.log(`Message ${messageId} is ${entry.intersectionRatio * 100}% visible`);
+          // Debounce the update to avoid too many API calls
+          const debounceTimeout = setTimeout(() => {
+            updateLastRead(messageId);
+          }, 300);
+
+          return () => clearTimeout(debounceTimeout);
         }
       });
     };
 
+    console.log('Setting up intersection observer for channel:', channelId);
     const observer = new IntersectionObserver(handleIntersection, options);
     observerRef.current = observer;
 
+    // Observe all message elements
     const messageElements = document.querySelectorAll('[data-message-id]');
+    console.log(`Found ${messageElements.length} messages to observe`);
     messageElements.forEach((element) => observer.observe(element));
 
+    // Cleanup function
     return () => {
+      console.log('Cleaning up intersection observer');
       observer.disconnect();
+      observerRef.current = null;
     };
   }, [updateLastRead, channelId]);
+
+  // Ensure new messages are observed when they're added
+  useEffect(() => {
+    if (!observerRef.current || !channelId) return;
+
+    const messageElements = document.querySelectorAll('[data-message-id]');
+    messageElements.forEach((element) => {
+      if (element instanceof Element) {
+        observerRef.current?.observe(element);
+      }
+    });
+  }, [messagesData, channelId]);
 
   // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({

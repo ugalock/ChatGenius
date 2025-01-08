@@ -22,6 +22,7 @@ type WSMessageType =
   | "error"
   | "channel_created"
   | "unread_update"
+  | "message_read"
   | "auth_check";
 
 interface WSMessage {
@@ -35,6 +36,7 @@ interface WSMessage {
     status?: string;
     channel?: any;
     user?: any;
+    readAt?: string;
     [key: string]: any;
   };
 }

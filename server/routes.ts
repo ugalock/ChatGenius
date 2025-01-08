@@ -10,6 +10,7 @@ import {
   directMessages,
   users,
   channelUnreads,
+  messageReads,
 } from "@db/schema";
 import { eq, and, or, desc, asc, sql, lt, gt } from "drizzle-orm";
 import { log } from "./vite";
@@ -231,7 +232,7 @@ export function registerRoutes(app: Express): Server {
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Build the query with proper types
+        // Base query with proper types
         const baseQuery = db
           .select({
             id: messages.id,
@@ -252,12 +253,11 @@ export function registerRoutes(app: Express): Server {
           .where(eq(messages.channelId, channelId));
 
         // Add pagination conditions
-        let query = baseQuery;
-        if (before) {
-          query = query.where(lt(messages.id, parseInt(before)));
-        } else if (after) {
-          query = query.where(gt(messages.id, parseInt(after)));
-        }
+        const query = before
+          ? baseQuery.where(lt(messages.id, parseInt(before)))
+          : after
+          ? baseQuery.where(gt(messages.id, parseInt(after)))
+          : baseQuery;
 
         // Execute query with ordering and limit
         const channelMessages = await query
@@ -512,6 +512,49 @@ export function registerRoutes(app: Express): Server {
     } catch (error) {
       log(`[ERROR] Failed to delete channel member: ${error}`);
       res.status(500).json({ message: "Failed to delete channel member" });
+    }
+  });
+
+  // Mark individual message as read
+  app.post("/api/messages/:messageId/read", requireAuth, async (req, res) => {
+    try {
+      const messageId = parseInt(req.params.messageId);
+      const userId = req.user!.id;
+
+      // Verify the message exists
+      const [message] = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1);
+
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+
+      // Insert or ignore (if already exists) the message read record
+      await db
+        .insert(messageReads)
+        .values({
+          messageId,
+          userId,
+        })
+        .onConflictDoNothing();
+
+      // Broadcast read status update
+      ws.broadcast({
+        type: "message_read",
+        payload: {
+          messageId,
+          userId,
+          channelId: message.channelId ?? undefined,
+        },
+      });
+
+      res.json({ message: "Message marked as read" });
+    } catch (error) {
+      log(`[ERROR] Failed to mark message as read: ${error}`);
+      res.status(500).json({ message: "Failed to mark message as read" });
     }
   });
 
