@@ -11,7 +11,7 @@ import {
   users,
   channelUnreads,
 } from "@db/schema";
-import { eq, and, or, desc, asc, sql, as } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, lt, gt } from "drizzle-orm";
 import { log } from "./vite";
 import { z } from "zod";
 
@@ -20,6 +20,13 @@ const createChannelSchema = z.object({
   name: z.string().min(1, "Channel name is required"),
   description: z.string().optional(),
   isPrivate: z.boolean().default(false),
+});
+
+// Message query param validation schema
+const messageQuerySchema = z.object({
+  before: z.string().optional(),
+  after: z.string().optional(),
+  limit: z.string().default("50"),
 });
 
 export function registerRoutes(app: Express): Server {
@@ -149,36 +156,41 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Mark channel messages as read
-  app.get("/api/channels/:channelId/read", requireAuth, async (req, res) => {
+  // Update last read message
+  app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
     try {
+      const { messageId } = req.body;
       const channelId = parseInt(req.params.channelId);
       const userId = req.user!.id;
 
-      // Get the latest message in the channel
-      const [latestMessage] = await db
+      // Verify the message exists and belongs to the channel
+      const [message] = await db
         .select()
         .from(messages)
-        .where(eq(messages.channelId, channelId))
-        .orderBy(desc(messages.createdAt))
+        .where(
+          and(
+            eq(messages.id, messageId),
+            eq(messages.channelId, channelId)
+          )
+        )
         .limit(1);
 
-      if (!latestMessage) {
-        return res.json({ message: "No messages to mark as read" });
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
       }
 
-      // Update or insert the unread tracking record with lastReadMessageId
+      // Update or insert the unread tracking record
       await db
         .insert(channelUnreads)
         .values({
           channelId,
           userId,
-          lastReadMessageId: latestMessage.id,
+          lastReadMessageId: messageId,
         })
         .onConflictDoUpdate({
           target: [channelUnreads.channelId, channelUnreads.userId],
           set: {
-            lastReadMessageId: latestMessage.id,
+            lastReadMessageId: messageId,
             updatedAt: new Date(),
           },
         });
@@ -188,50 +200,99 @@ export function registerRoutes(app: Express): Server {
         type: "unread_update",
         payload: {
           channelId,
-          messageId: latestMessage.id,
+          messageId,
+          userId,
         },
       });
 
-      res.json({ message: "Messages marked as read" });
+      res.json({ message: "Last read message updated" });
     } catch (error) {
-      log(`[ERROR] Failed to mark messages as read: ${error}`);
-      res.status(500).json({ message: "Failed to mark messages as read" });
+      log(`[ERROR] Failed to update last read message: ${error}`);
+      res.status(500).json({ message: "Failed to update last read message" });
     }
   });
 
-  // Messages
+
+  // Messages with pagination
   app.get(
     "/api/channels/:channelId/messages",
     requireAuth,
     async (req, res) => {
       try {
-        const channelMessages = await db
+        const queryResult = messageQuerySchema.safeParse(req.query);
+        if (!queryResult.success) {
+          return res.status(400).json({
+            message: "Invalid query parameters",
+            errors: queryResult.error.issues,
+          });
+        }
+
+        const { before, after, limit } = queryResult.data;
+        const channelId = parseInt(req.params.channelId);
+        const messageLimit = Math.min(parseInt(limit), 50);
+
+        // Build the base query
+        let query = db
           .select({
-            message: messages,
-            user: users,
+            id: messages.id,
+            content: messages.content,
+            channelId: messages.channelId,
+            userId: messages.userId,
+            createdAt: messages.createdAt,
+            updatedAt: messages.updatedAt,
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+              status: users.status,
+            },
           })
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
-          .where(eq(messages.channelId, parseInt(req.params.channelId)))
-          .orderBy(asc(messages.createdAt))
-          .limit(50);
+          .where(eq(messages.channelId, channelId));
 
-        res.json(
-          channelMessages.map(({ message, user }) => ({
-            ...message,
-            user: {
-              id: user.id,
-              username: user.username,
-              avatar: user.avatar,
-              status: user.status,
-            },
+        // Add pagination conditions
+        if (before) {
+          query = query.where(lt(messages.id, parseInt(before)));
+        } else if (after) {
+          query = query.where(gt(messages.id, parseInt(after)));
+        }
+
+        // Execute query with ordering and limit
+        const channelMessages = await query
+          .orderBy(after ? asc(messages.createdAt) : desc(messages.createdAt))
+          .limit(messageLimit);
+
+        // If we're fetching newer messages (after), reverse the order
+        if (after) {
+          channelMessages.reverse();
+        }
+
+        // Format response
+        const response = {
+          data: channelMessages.map((message) => ({
+            id: message.id,
+            content: message.content,
+            channelId: message.channelId,
+            userId: message.userId,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+            user: message.user,
           })),
-        );
+          nextCursor: channelMessages.length === messageLimit ? 
+            (after ? channelMessages[channelMessages.length - 1].id.toString() : channelMessages[0].id.toString()) : 
+            null,
+          prevCursor: channelMessages.length === messageLimit ? 
+            (after ? null : channelMessages[channelMessages.length - 1].id.toString()) : 
+            null,
+        };
+
+        res.json(response);
       } catch (error) {
         log(`[ERROR] Failed to fetch messages: ${error}`);
         res.status(500).json({ message: "Failed to fetch messages" });
       }
-    },
+    }
   );
 
   app.post(
@@ -296,7 +357,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to post message: ${error}`);
         res.status(500).json({ message: "Failed to post message" });
       }
-    },
+    }
   );
 
   // Direct Messages

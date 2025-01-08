@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useCallback } from "react";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -10,50 +10,73 @@ import type { Message, User, DirectMessage, Channel } from "@db/schema";
 import MessageInput from "./MessageInput";
 
 // Extend the base message types to include the user
-type ExtendedChannelMessage = Message & {
+type ExtendedMessage = (Message | DirectMessage) & {
   user: User;
 };
-
-type ExtendedDirectMessage = DirectMessage & {
-  user: User;
-};
-
-type ExtendedMessage = ExtendedChannelMessage | ExtendedDirectMessage;
 
 type Props = {
   channelId: number | null;
   userId: number | null;
 };
 
+interface PageParam {
+  before: string | null;
+  after: string | null;
+}
+
+interface MessagesPage {
+  data: ExtendedMessage[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+}
+
+const MESSAGES_PER_PAGE = 50;
+
 export default function MessageList({ channelId, userId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastReadRef = useRef<number | null>(null);
   const { user: currentUser, token } = useUser();
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Query for messages
-  const { data: messages } = useQuery<ExtendedMessage[]>({
-    queryKey: userId
-      ? ["/api/dm", userId]
-      : ["/api/channels", channelId, "messages"],
-    queryFn: async () => {
+  // Query for messages with infinite loading
+  const {
+    data: messagesData,
+    fetchNextPage,
+    fetchPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+  } = useInfiniteQuery<MessagesPage, Error, MessagesPage, (string | number | null)[], PageParam>({
+    queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
+    queryFn: async ({ pageParam = { before: null, after: null } as PageParam }) => {
       const url = userId
         ? `/api/dm/${userId}`
         : `/api/channels/${channelId}/messages`;
-      const response = await fetch(url, {
+
+      const queryParams = new URLSearchParams();
+      if (pageParam.before) queryParams.append('before', pageParam.before);
+      if (pageParam.after) queryParams.append('after', pageParam.after);
+      queryParams.append('limit', MESSAGES_PER_PAGE.toString());
+
+      const response = await fetch(`${url}?${queryParams}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-      if (!response.ok) throw new Error("Failed to fetch messages");
 
-      if (!userId) {
-        await fetch(`/api/channels/${channelId}/read`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      }
+      if (!response.ok) throw new Error("Failed to fetch messages");
       return response.json();
     },
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE) return undefined;
+      return { before: lastPage.data[0].id.toString(), after: null };
+    },
+    getPreviousPageParam: (firstPage) => {
+      if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE) return undefined;
+      return { before: null, after: firstPage.data[firstPage.data.length - 1].id.toString() };
+    },
+    initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
 
@@ -87,16 +110,81 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!channelId,
   });
 
-  const scrollDown = () => {
-    const element = document.getElementById('scroll-container');
-    if (element) {
-      element.scrollTop = element.scrollHeight;
-    }
-  }
+  // Update last read message when messages come into view
+  const updateLastRead = useCallback(async (messageId: number) => {
+    if (!channelId || messageId <= (lastReadRef.current || 0)) return;
 
+    lastReadRef.current = messageId;
+    try {
+      const response = await fetch(`/api/channels/${channelId}/read`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messageId }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to update last read message');
+      }
+    } catch (error) {
+      console.error('Error updating last read message:', error);
+    }
+  }, [channelId, token]);
+
+  // Setup intersection observer for infinite scroll and read tracking
   useEffect(() => {
-    scrollDown();
-  }, []);
+    const options = {
+      root: document.getElementById('scroll-container'),
+      threshold: 0.5,
+    };
+
+    observerRef.current = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
+          if (messageId) {
+            updateLastRead(messageId);
+          }
+        }
+      });
+    }, options);
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [updateLastRead]);
+
+  // Observe new message elements
+  useEffect(() => {
+    const messages = document.querySelectorAll('[data-message-id]');
+    messages.forEach((message) => {
+      if (observerRef.current) {
+        observerRef.current.observe(message);
+      }
+    });
+
+    return () => {
+      if (observerRef.current) {
+        messages.forEach((message) => {
+          observerRef.current?.unobserve(message);
+        });
+      }
+    };
+  }, [messagesData?.pages]);
+
+  const getMessageTitle = () => {
+    if (userId && chatPartner) {
+      return chatPartner.username;
+    }
+    if (channelId && channel) {
+      return `#${channel.name}`;
+    }
+    return '';
+  };
 
   if (!channelId && !userId) {
     return (
@@ -105,6 +193,8 @@ export default function MessageList({ channelId, userId }: Props) {
       </div>
     );
   }
+
+  const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
   return (
     <div className="h-full flex flex-col">
@@ -129,7 +219,6 @@ export default function MessageList({ channelId, userId }: Props) {
           )}
           <div>
             <h2 className="text-xl font-semibold">{getMessageTitle()}</h2>
-            {/* <span className="text-sm text-gray-500">{subtitle}</span> */}
           </div>
         </div>
         <div className="flex items-center space-x-4">
@@ -140,10 +229,14 @@ export default function MessageList({ channelId, userId }: Props) {
           <File className="w-5 h-5 text-gray-500 cursor-pointer" />
         </div>
       </div>
+
       <ScrollArea id="scroll-container" className="flex-1 p-4">
+        {isFetchingNextPage && (
+          <div className="text-center py-2">Loading older messages...</div>
+        )}
         <div className="space-y-4">
-          {messages?.map((message, i) => {
-            const previousMessage = messages[i - 1];
+          {allMessages.map((message, i) => {
+            const previousMessage = allMessages[i - 1];
             const showHeader =
               !previousMessage ||
               previousMessage.user.id !== message.user.id ||
@@ -152,7 +245,11 @@ export default function MessageList({ channelId, userId }: Props) {
                 300000;
 
             return (
-              <div key={message.id} className="group">
+              <div
+                key={message.id}
+                className="group"
+                data-message-id={message.id}
+              >
                 {showHeader && (
                   <div className="flex items-center gap-2 mb-2">
                     <Avatar className="h-10 w-10">
@@ -169,7 +266,7 @@ export default function MessageList({ channelId, userId }: Props) {
                         {formatDistance(
                           new Date(message.createdAt!),
                           new Date(),
-                          { addSuffix: true },
+                          { addSuffix: true }
                         )}
                       </span>
                     </div>
@@ -177,46 +274,16 @@ export default function MessageList({ channelId, userId }: Props) {
                 )}
                 <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                   <p className="text-gray-800">{message.content}</p>
-                  {message.attachments &&
-                    typeof message.attachments === "object" && (
-                      <div className="mt-2 space-y-2">
-                        {Object.entries(
-                          message.attachments as Record<string, string>,
-                        ).map(([name, url]) => (
-                          <a
-                            key={name}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-500 hover:underline"
-                          >
-                            {name}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  {message.reactions &&
-                    typeof message.reactions === "object" && (
-                      <div className="mt-2 flex gap-1">
-                        {Object.entries(
-                          message.reactions as Record<string, string[]>,
-                        ).map(([emoji, users]) => (
-                          <div
-                            key={emoji}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-full text-sm cursor-pointer hover:bg-gray-200"
-                          >
-                            <span>{emoji}</span>
-                            <span>{users.length}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                 </div>
               </div>
             );
           })}
         </div>
+        {isFetchingPreviousPage && (
+          <div className="text-center py-2">Loading newer messages...</div>
+        )}
       </ScrollArea>
+
       <Separator />
       <div className="p-4">
         <MessageInput
