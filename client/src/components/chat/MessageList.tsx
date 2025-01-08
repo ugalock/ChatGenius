@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -24,7 +24,7 @@ interface PageParam {
   after: string | null;
 }
 
-interface MessagesPage {
+interface MessagesResponse {
   data: ExtendedMessage[];
   nextCursor: string | null;
   prevCursor: string | null;
@@ -37,6 +37,7 @@ export default function MessageList({ channelId, userId }: Props) {
   const lastReadRef = useRef<number | null>(null);
   const { user: currentUser, token } = useUser();
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const [scrollPosition, setScrollPosition] = useState<number | null>(null);
 
   // Query for messages with infinite loading
   const {
@@ -47,16 +48,16 @@ export default function MessageList({ channelId, userId }: Props) {
     hasPreviousPage,
     isFetchingNextPage,
     isFetchingPreviousPage,
-  } = useInfiniteQuery<MessagesPage, Error, MessagesPage, (string | number | null)[], PageParam>({
+  } = useInfiniteQuery<MessagesResponse, Error>({
     queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
-    queryFn: async ({ pageParam = { before: null, after: null } as PageParam }) => {
+    queryFn: async ({ pageParam = { before: null, after: null } }) => {
       const url = userId
         ? `/api/dm/${userId}`
         : `/api/channels/${channelId}/messages`;
 
       const queryParams = new URLSearchParams();
-      if (pageParam.before) queryParams.append('before', pageParam.before);
-      if (pageParam.after) queryParams.append('after', pageParam.after);
+      if ((pageParam as PageParam).before) queryParams.append('before', (pageParam as PageParam).before!);
+      if ((pageParam as PageParam).after) queryParams.append('after', (pageParam as PageParam).after!);
       queryParams.append('limit', MESSAGES_PER_PAGE.toString());
 
       const response = await fetch(`${url}?${queryParams}`, {
@@ -70,15 +71,102 @@ export default function MessageList({ channelId, userId }: Props) {
     },
     getNextPageParam: (lastPage) => {
       if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: lastPage.data[0].id.toString(), after: null };
+      return { before: lastPage.data[0].id.toString(), after: null } as PageParam;
     },
     getPreviousPageParam: (firstPage) => {
       if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: null, after: firstPage.data[firstPage.data.length - 1].id.toString() };
+      return { before: null, after: firstPage.data[firstPage.data.length - 1].id.toString() } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
+
+  // Save scroll position when leaving channel
+  useEffect(() => {
+    return () => {
+      if (scrollRef.current) {
+        setScrollPosition(scrollRef.current.scrollTop);
+      }
+    };
+  }, [channelId, userId]);
+
+  // Restore scroll position when returning to channel
+  useEffect(() => {
+    if (scrollRef.current && scrollPosition !== null) {
+      scrollRef.current.scrollTop = scrollPosition;
+    }
+  }, [scrollPosition, channelId, userId]);
+
+  // Handle infinite scroll
+  useEffect(() => {
+    const scrollContainer = document.getElementById('scroll-container');
+    if (!scrollContainer) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+
+      // Load older messages when scrolling up
+      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+
+      // Load newer messages when scrolling down
+      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
+        fetchPreviousPage();
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll);
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
+
+  // Update last read message when messages come into view
+  const updateLastRead = useCallback(async (messageId: number) => {
+    if (!channelId || messageId <= (lastReadRef.current || 0)) return;
+
+    lastReadRef.current = messageId;
+    try {
+      const response = await fetch(`/api/channels/${channelId}/read`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messageId }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to update last read message');
+      }
+    } catch (error) {
+      console.error('Error updating last read message:', error);
+    }
+  }, [channelId, token]);
+
+  // Setup intersection observer for message tracking
+  useEffect(() => {
+    const options = {
+      root: document.getElementById('scroll-container'),
+      threshold: 0.5,
+    };
+
+    observerRef.current = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
+          if (messageId && channelId) {
+            updateLastRead(messageId);
+          }
+        }
+      });
+    }, options);
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [updateLastRead, channelId]);
 
   // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({
@@ -109,72 +197,6 @@ export default function MessageList({ channelId, userId }: Props) {
     },
     enabled: !!channelId,
   });
-
-  // Update last read message when messages come into view
-  const updateLastRead = useCallback(async (messageId: number) => {
-    if (!channelId || messageId <= (lastReadRef.current || 0)) return;
-
-    lastReadRef.current = messageId;
-    try {
-      const response = await fetch(`/api/channels/${channelId}/read`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ messageId }),
-      });
-
-      if (!response.ok) {
-        console.error('Failed to update last read message');
-      }
-    } catch (error) {
-      console.error('Error updating last read message:', error);
-    }
-  }, [channelId, token]);
-
-  // Setup intersection observer for infinite scroll and read tracking
-  useEffect(() => {
-    const options = {
-      root: document.getElementById('scroll-container'),
-      threshold: 0.5,
-    };
-
-    observerRef.current = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
-          if (messageId) {
-            updateLastRead(messageId);
-          }
-        }
-      });
-    }, options);
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [updateLastRead]);
-
-  // Observe new message elements
-  useEffect(() => {
-    const messages = document.querySelectorAll('[data-message-id]');
-    messages.forEach((message) => {
-      if (observerRef.current) {
-        observerRef.current.observe(message);
-      }
-    });
-
-    return () => {
-      if (observerRef.current) {
-        messages.forEach((message) => {
-          observerRef.current?.unobserve(message);
-        });
-      }
-    };
-  }, [messagesData?.pages]);
 
   const getMessageTitle = () => {
     if (userId && chatPartner) {
@@ -230,12 +252,12 @@ export default function MessageList({ channelId, userId }: Props) {
         </div>
       </div>
 
-      <ScrollArea id="scroll-container" className="flex-1 p-4">
+      <ScrollArea id="scroll-container" ref={scrollRef} className="flex-1 p-4">
         {isFetchingNextPage && (
           <div className="text-center py-2">Loading older messages...</div>
         )}
         <div className="space-y-4">
-          {allMessages.map((message, i) => {
+          {allMessages.map((message: ExtendedMessage, i: number) => {
             const previousMessage = allMessages[i - 1];
             const showHeader =
               !previousMessage ||

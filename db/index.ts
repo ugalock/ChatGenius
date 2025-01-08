@@ -14,14 +14,13 @@ const db = drizzle({
   connection: process.env.DATABASE_URL,
   schema,
   ws: ws,
-  logger: true,
+  // logger: true,
 });
 
 // Test the connection
 const testConnection = async () => {
   try {
     await db.execute(sql`SELECT 1`);
-    log("[DB] Database connection successful");
   } catch (error) {
     log(`[DB] Database connection failed: ${error}`);
     throw error;
