@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,7 +37,6 @@ export default function MessageList({ channelId, userId }: Props) {
   const lastReadRef = useRef<number | null>(null);
   const { user: currentUser, token } = useUser();
   const observerRef = useRef<IntersectionObserver | null>(null);
-  const [scrollPosition, setScrollPosition] = useState<number | null>(null);
 
   // Query for messages with infinite loading
   const {
@@ -48,7 +47,7 @@ export default function MessageList({ channelId, userId }: Props) {
     hasPreviousPage,
     isFetchingNextPage,
     isFetchingPreviousPage,
-  } = useInfiniteQuery<MessagesResponse, Error>({
+  } = useInfiniteQuery<MessagesResponse>({
     queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
     queryFn: async ({ pageParam = { before: null, after: null } }) => {
       const url = userId
@@ -56,8 +55,14 @@ export default function MessageList({ channelId, userId }: Props) {
         : `/api/channels/${channelId}/messages`;
 
       const queryParams = new URLSearchParams();
-      if ((pageParam as PageParam).before) queryParams.append('before', (pageParam as PageParam).before!);
-      if ((pageParam as PageParam).after) queryParams.append('after', (pageParam as PageParam).after!);
+
+      const typedPageParam = pageParam as PageParam;
+      if (typedPageParam.before) {
+        queryParams.append('before', typedPageParam.before);
+      }
+      if (typedPageParam.after) {
+        queryParams.append('after', typedPageParam.after);
+      }
       queryParams.append('limit', MESSAGES_PER_PAGE.toString());
 
       const response = await fetch(`${url}?${queryParams}`, {
@@ -83,19 +88,31 @@ export default function MessageList({ channelId, userId }: Props) {
 
   // Save scroll position when leaving channel
   useEffect(() => {
+    const storageKey = `chat-scroll-position-${channelId || userId}`;
+
+    // Save position when unmounting
     return () => {
       if (scrollRef.current) {
-        setScrollPosition(scrollRef.current.scrollTop);
+        const position = scrollRef.current.scrollTop;
+        localStorage.setItem(storageKey, position.toString());
       }
     };
   }, [channelId, userId]);
 
-  // Restore scroll position when returning to channel
+  // Restore scroll position when mounting
   useEffect(() => {
-    if (scrollRef.current && scrollPosition !== null) {
-      scrollRef.current.scrollTop = scrollPosition;
+    const storageKey = `chat-scroll-position-${channelId || userId}`;
+    const savedPosition = localStorage.getItem(storageKey);
+
+    if (scrollRef.current && savedPosition) {
+      // Use setTimeout to ensure content is loaded
+      setTimeout(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = parseInt(savedPosition);
+        }
+      }, 100);
     }
-  }, [scrollPosition, channelId, userId]);
+  }, [channelId, userId]);
 
   // Handle infinite scroll
   useEffect(() => {
@@ -143,28 +160,33 @@ export default function MessageList({ channelId, userId }: Props) {
     }
   }, [channelId, token]);
 
-  // Setup intersection observer for message tracking
+  // Enhanced intersection observer setup
   useEffect(() => {
-    const options = {
+    if (!channelId) return;
+
+    const options: IntersectionObserverInit = {
       root: document.getElementById('scroll-container'),
-      threshold: 0.5,
+      threshold: [0.3, 0.5, 0.7],
+      rootMargin: '100px',
     };
 
-    observerRef.current = new IntersectionObserver((entries) => {
+    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
       entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
-          if (messageId && channelId) {
-            updateLastRead(messageId);
-          }
+        const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
+        if (entry.intersectionRatio >= 0.5 && messageId && channelId) {
+          updateLastRead(messageId);
         }
       });
-    }, options);
+    };
+
+    const observer = new IntersectionObserver(handleIntersection, options);
+    observerRef.current = observer;
+
+    const messageElements = document.querySelectorAll('[data-message-id]');
+    messageElements.forEach((element) => observer.observe(element));
 
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
+      observer.disconnect();
     };
   }, [updateLastRead, channelId]);
 
