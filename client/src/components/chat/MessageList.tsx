@@ -38,6 +38,8 @@ export default function MessageList({ channelId, userId }: Props) {
   const { user: currentUser, token } = useUser();
   const observerRef = useRef<IntersectionObserver | null>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout>();
+  const processedMessagesRef = useRef<Set<number>>(new Set());
+  const retryTimeoutsRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
 
   // Query for messages with infinite loading
   const {
@@ -87,6 +89,142 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!(channelId || userId),
   });
 
+  // Enhanced updateLastRead function with retry mechanism
+  const updateLastRead = useCallback(async (messageId: number) => {
+    if (!messageId) return;
+
+    try {
+      console.log(`[MessageTracking] Marking message ${messageId} as read`);
+      const response = await fetch(`/api/messages/${messageId}/read`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[MessageTracking] Failed to mark message as read:', errorText);
+
+        // Clear any existing retry timeout for this message
+        if (retryTimeoutsRef.current.has(messageId)) {
+          clearTimeout(retryTimeoutsRef.current.get(messageId));
+          retryTimeoutsRef.current.delete(messageId);
+        }
+
+        // Set up retry with exponential backoff
+        const retryTimeout = setTimeout(() => {
+          console.log(`[MessageTracking] Retrying to mark message ${messageId} as read`);
+          processedMessagesRef.current.delete(messageId); // Allow retry
+          updateLastRead(messageId);
+        }, 1000);
+
+        retryTimeoutsRef.current.set(messageId, retryTimeout);
+      } else {
+        console.log(`[MessageTracking] Successfully marked message ${messageId} as read`);
+        processedMessagesRef.current.add(messageId);
+
+        // Clear retry timeout if exists
+        if (retryTimeoutsRef.current.has(messageId)) {
+          clearTimeout(retryTimeoutsRef.current.get(messageId));
+          retryTimeoutsRef.current.delete(messageId);
+        }
+      }
+    } catch (error) {
+      console.error('[MessageTracking] Error marking message as read:', error);
+      // Reset processed state to allow retry
+      processedMessagesRef.current.delete(messageId);
+    }
+  }, [token]);
+
+  // Handle infinite scroll
+  useEffect(() => {
+    const scrollContainer = document.getElementById('scroll-container');
+    if (!scrollContainer) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+
+      // Load older messages when scrolling up
+      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+
+      // Load newer messages when scrolling down
+      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
+        fetchPreviousPage();
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll);
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
+
+  // Enhanced intersection observer setup with better visibility tracking
+  useEffect(() => {
+    if (!channelId) return;
+
+    const options: IntersectionObserverInit = {
+      root: document.getElementById('scroll-container'),
+      // Using multiple thresholds for more granular visibility detection
+      threshold: [0.1, 0.3, 0.5],
+      // Add margin to start observing before elements are fully in view
+      rootMargin: '20px 0px',
+    };
+
+    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
+      entries.forEach((entry) => {
+        const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
+        const userId = parseInt(entry.target.getAttribute('data-user-id') || '0');
+
+        // Skip messages from the current user and already processed messages
+        if (userId === currentUser?.id || processedMessagesRef.current.has(messageId)) {
+          return;
+        }
+
+        // Mark as read if message is at least 30% visible
+        if (entry.intersectionRatio >= 0.3 && messageId && channelId) {
+          console.log(`[MessageTracking] Message ${messageId} is ${entry.intersectionRatio * 100}% visible`);
+
+          // Clear any existing timeout
+          if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+          }
+
+          // Debounce the update to avoid too many API calls
+          debounceTimeoutRef.current = setTimeout(() => {
+            updateLastRead(messageId);
+          }, 200); // Reduced debounce time for better responsiveness
+        }
+      });
+    };
+
+    console.log('[MessageTracking] Setting up intersection observer for channel:', channelId);
+    const observer = new IntersectionObserver(handleIntersection, options);
+    observerRef.current = observer;
+
+    // Observe all message elements
+    const messageElements = document.querySelectorAll('[data-message-id]');
+    console.log(`[MessageTracking] Found ${messageElements.length} messages to observe`);
+    messageElements.forEach((element) => observer.observe(element));
+
+    // Enhanced cleanup function
+    return () => {
+      console.log('[MessageTracking] Cleaning up intersection observer');
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      // Clear all retry timeouts
+      retryTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+      retryTimeoutsRef.current.clear();
+      observer.disconnect();
+      observerRef.current = null;
+      // Reset processed messages when changing channels
+      processedMessagesRef.current.clear();
+    };
+  }, [channelId, updateLastRead, currentUser?.id]);
+
   // Save scroll position when leaving channel
   useEffect(() => {
     const storageKey = `chat-scroll-position-${channelId || userId}`;
@@ -114,109 +252,6 @@ export default function MessageList({ channelId, userId }: Props) {
       }, 100);
     }
   }, [channelId, userId]);
-
-  // Handle infinite scroll
-  useEffect(() => {
-    const scrollContainer = document.getElementById('scroll-container');
-    if (!scrollContainer) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-
-      // Load older messages when scrolling up
-      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
-        fetchNextPage();
-      }
-
-      // Load newer messages when scrolling down
-      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
-        fetchPreviousPage();
-      }
-    };
-
-    scrollContainer.addEventListener('scroll', handleScroll);
-    return () => scrollContainer.removeEventListener('scroll', handleScroll);
-  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
-
-  // Enhanced updateLastRead function with proper error handling and logging
-  const updateLastRead = useCallback(async (messageId: number) => {
-    if (!messageId || messageId <= (lastReadRef.current || 0)) return;
-
-    lastReadRef.current = messageId;
-    try {
-      console.log(`[MessageTracking] Marking message ${messageId} as read`);
-      const response = await fetch(`/api/messages/${messageId}/read`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[MessageTracking] Failed to mark message as read:', errorText);
-        // Reset lastReadRef on error to allow retry
-        lastReadRef.current = null;
-      } else {
-        console.log(`[MessageTracking] Successfully marked message ${messageId} as read`);
-      }
-    } catch (error) {
-      console.error('[MessageTracking] Error marking message as read:', error);
-      // Reset lastReadRef on error to allow retry
-      lastReadRef.current = null;
-    }
-  }, [token]);
-
-  // Enhanced intersection observer setup with better visibility tracking
-  useEffect(() => {
-    if (!channelId) return;
-
-    const options: IntersectionObserverInit = {
-      root: document.getElementById('scroll-container'),
-      // Using multiple thresholds for more granular visibility detection
-      threshold: [0.3, 0.5, 0.7],
-      // Add margin to start observing before elements are fully in view
-      rootMargin: '20px 0px',
-    };
-
-    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
-      entries.forEach((entry) => {
-        const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
-        // Only mark as read if message is significantly visible (50% or more)
-        if (entry.intersectionRatio >= 0.5 && messageId && channelId) {
-          console.log(`[MessageTracking] Message ${messageId} is ${entry.intersectionRatio * 100}% visible`);
-          // Clear any existing timeout
-          if (debounceTimeoutRef.current) {
-            clearTimeout(debounceTimeoutRef.current);
-          }
-          // Debounce the update to avoid too many API calls
-          debounceTimeoutRef.current = setTimeout(() => {
-            updateLastRead(messageId);
-          }, 300);
-        }
-      });
-    };
-
-    console.log('[MessageTracking] Setting up intersection observer for channel:', channelId);
-    const observer = new IntersectionObserver(handleIntersection, options);
-    observerRef.current = observer;
-
-    // Observe all message elements
-    const messageElements = document.querySelectorAll('[data-message-id]');
-    console.log(`[MessageTracking] Found ${messageElements.length} messages to observe`);
-    messageElements.forEach((element) => observer.observe(element));
-
-    // Enhanced cleanup function
-    return () => {
-      console.log('[MessageTracking] Cleaning up intersection observer');
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-      }
-      observer.disconnect();
-      observerRef.current = null;
-    };
-  }, [channelId, updateLastRead]);
 
   // Ensure new messages are observed when they're added
   useEffect(() => {

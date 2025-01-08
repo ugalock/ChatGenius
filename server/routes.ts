@@ -167,10 +167,7 @@ export function registerRoutes(app: Express): Server {
         .select()
         .from(messages)
         .where(
-          and(
-            eq(messages.id, messageId),
-            eq(messages.channelId, channelId)
-          )
+          and(eq(messages.id, messageId), eq(messages.channelId, channelId)),
         )
         .limit(1);
 
@@ -211,7 +208,6 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-
   // Messages with pagination
   app.get(
     "/api/channels/:channelId/messages",
@@ -231,7 +227,7 @@ export function registerRoutes(app: Express): Server {
         const messageLimit = Math.min(parseInt(limit), 50);
 
         // Base query with proper types
-        const baseQuery = db
+        let query = db
           .select({
             id: messages.id,
             content: messages.content,
@@ -251,39 +247,32 @@ export function registerRoutes(app: Express): Server {
           .where(eq(messages.channelId, channelId));
 
         // Add pagination conditions
-        const query = before
-          ? baseQuery.where(lt(messages.id, parseInt(before)))
-          : after
-          ? baseQuery.where(gt(messages.id, parseInt(after)))
-          : baseQuery;
+        if (before) {
+          query = query.where(lt(messages.id, parseInt(before)));
+        } else if (after) {
+          query = query.where(gt(messages.id, parseInt(after)));
+        }
 
         // Execute query with ordering and limit
         const channelMessages = await query
           .orderBy(after ? asc(messages.createdAt) : desc(messages.createdAt))
           .limit(messageLimit);
 
-        // If we're fetching newer messages (after), reverse the order
-        if (after) {
-          channelMessages.reverse();
-        }
-
         // Format response
         const response = {
-          data: channelMessages.map((message) => ({
-            id: message.id,
-            content: message.content,
-            channelId: message.channelId,
-            userId: message.userId,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-            user: message.user,
-          })),
-          nextCursor: channelMessages.length === messageLimit ? 
-            (after ? channelMessages[channelMessages.length - 1].id.toString() : channelMessages[0].id.toString()) : 
-            null,
-          prevCursor: channelMessages.length === messageLimit ? 
-            (after ? null : channelMessages[channelMessages.length - 1].id.toString()) : 
-            null,
+          data: channelMessages,
+          nextCursor:
+            channelMessages.length === messageLimit
+              ? after
+                ? channelMessages[channelMessages.length - 1].id.toString()
+                : channelMessages[0].id.toString()
+              : null,
+          prevCursor:
+            channelMessages.length === messageLimit
+              ? after
+                ? null
+                : channelMessages[channelMessages.length - 1].id.toString()
+              : null,
         };
 
         res.json(response);
@@ -291,7 +280,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to fetch messages: ${error}`);
         res.status(500).json({ message: "Failed to fetch messages" });
       }
-    }
+    },
   );
 
   app.post(
@@ -356,7 +345,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to post message: ${error}`);
         res.status(500).json({ message: "Failed to post message" });
       }
-    }
+    },
   );
 
   // Direct Messages
@@ -513,7 +502,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Add individual message read tracking endpoint
+  // Mark individual message as read
   app.post("/api/messages/:messageId/read", requireAuth, async (req, res) => {
     try {
       const messageId = parseInt(req.params.messageId);
