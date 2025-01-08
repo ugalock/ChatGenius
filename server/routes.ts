@@ -60,13 +60,11 @@ export function registerRoutes(app: Express): Server {
               (
                 SELECT COUNT(msg.id)::integer 
                 FROM ${messages} msg
-                LEFT JOIN ${channelUnreads} cu
-                  ON cu.channel_id = channels.id 
-                  AND cu.user_id = ${req.user!.id}
                 WHERE msg.channel_id = channels.id
-                AND (
-                  cu.last_read_message_id IS NULL 
-                  OR msg.id > cu.last_read_message_id
+                AND NOT EXISTS (
+                  SELECT 1 FROM ${messageReads} mr
+                  WHERE mr.message_id = msg.id
+                  AND mr.user_id = ${req.user!.id}
                 )
               ),
               0
@@ -515,7 +513,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Mark individual message as read
+  // Add individual message read tracking endpoint
   app.post("/api/messages/:messageId/read", requireAuth, async (req, res) => {
     try {
       const messageId = parseInt(req.params.messageId);

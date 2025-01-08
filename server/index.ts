@@ -2,7 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupAuth } from "./auth";
 import { setupVite, serveStatic, log } from "./vite";
-import cors from 'cors';
+import cors from "cors";
 import { db } from "@db";
 
 const app = express();
@@ -12,24 +12,17 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 // Configure CORS
-app.use(cors({
-  origin: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 (async () => {
   try {
     log("Starting server initialization...");
-
-    // Test database connection
-    try {
-      await db.query.users.findMany();
-      log("Database connection successful");
-    } catch (dbError) {
-      log(`Database connection failed: ${dbError}`);
-      process.exit(1);
-    }
 
     // Setup authentication
     try {

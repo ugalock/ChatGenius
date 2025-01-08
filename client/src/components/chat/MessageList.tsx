@@ -37,6 +37,7 @@ export default function MessageList({ channelId, userId }: Props) {
   const lastReadRef = useRef<number | null>(null);
   const { user: currentUser, token } = useUser();
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Query for messages with infinite loading
   const {
@@ -137,13 +138,13 @@ export default function MessageList({ channelId, userId }: Props) {
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
   }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
 
-  // Update last read message when messages come into view
+  // Enhanced updateLastRead function with proper error handling and logging
   const updateLastRead = useCallback(async (messageId: number) => {
-    if (!channelId || messageId <= (lastReadRef.current || 0)) return;
+    if (!messageId || messageId <= (lastReadRef.current || 0)) return;
 
     lastReadRef.current = messageId;
     try {
-      console.log(`Marking message ${messageId} as read`);
+      console.log(`[MessageTracking] Marking message ${messageId} as read`);
       const response = await fetch(`/api/messages/${messageId}/read`, {
         method: 'POST',
         headers: {
@@ -153,16 +154,21 @@ export default function MessageList({ channelId, userId }: Props) {
       });
 
       if (!response.ok) {
-        console.error('Failed to mark message as read:', await response.text());
+        const errorText = await response.text();
+        console.error('[MessageTracking] Failed to mark message as read:', errorText);
+        // Reset lastReadRef on error to allow retry
+        lastReadRef.current = null;
       } else {
-        console.log(`Successfully marked message ${messageId} as read`);
+        console.log(`[MessageTracking] Successfully marked message ${messageId} as read`);
       }
     } catch (error) {
-      console.error('Error marking message as read:', error);
+      console.error('[MessageTracking] Error marking message as read:', error);
+      // Reset lastReadRef on error to allow retry
+      lastReadRef.current = null;
     }
-  }, [channelId, token]);
+  }, [token]);
 
-  // Enhanced intersection observer setup
+  // Enhanced intersection observer setup with better visibility tracking
   useEffect(() => {
     if (!channelId) return;
 
@@ -179,39 +185,45 @@ export default function MessageList({ channelId, userId }: Props) {
         const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
         // Only mark as read if message is significantly visible (50% or more)
         if (entry.intersectionRatio >= 0.5 && messageId && channelId) {
-          console.log(`Message ${messageId} is ${entry.intersectionRatio * 100}% visible`);
+          console.log(`[MessageTracking] Message ${messageId} is ${entry.intersectionRatio * 100}% visible`);
+          // Clear any existing timeout
+          if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+          }
           // Debounce the update to avoid too many API calls
-          const debounceTimeout = setTimeout(() => {
+          debounceTimeoutRef.current = setTimeout(() => {
             updateLastRead(messageId);
           }, 300);
-
-          return () => clearTimeout(debounceTimeout);
         }
       });
     };
 
-    console.log('Setting up intersection observer for channel:', channelId);
+    console.log('[MessageTracking] Setting up intersection observer for channel:', channelId);
     const observer = new IntersectionObserver(handleIntersection, options);
     observerRef.current = observer;
 
     // Observe all message elements
     const messageElements = document.querySelectorAll('[data-message-id]');
-    console.log(`Found ${messageElements.length} messages to observe`);
+    console.log(`[MessageTracking] Found ${messageElements.length} messages to observe`);
     messageElements.forEach((element) => observer.observe(element));
 
-    // Cleanup function
+    // Enhanced cleanup function
     return () => {
-      console.log('Cleaning up intersection observer');
+      console.log('[MessageTracking] Cleaning up intersection observer');
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
       observer.disconnect();
       observerRef.current = null;
     };
-  }, [updateLastRead, channelId]);
+  }, [channelId, updateLastRead]);
 
   // Ensure new messages are observed when they're added
   useEffect(() => {
     if (!observerRef.current || !channelId) return;
 
     const messageElements = document.querySelectorAll('[data-message-id]');
+    console.log(`[MessageTracking] Observing ${messageElements.length} new messages`);
     messageElements.forEach((element) => {
       if (element instanceof Element) {
         observerRef.current?.observe(element);
@@ -322,6 +334,7 @@ export default function MessageList({ channelId, userId }: Props) {
                 key={message.id}
                 className="group"
                 data-message-id={message.id}
+                data-user-id={message.user.id}
               >
                 {showHeader && (
                   <div className="flex items-center gap-2 mb-2">
