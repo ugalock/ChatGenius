@@ -19,7 +19,7 @@ import { channel } from "diagnostics_channel";
 
 type ExtendedChannel = Channel & {
   isMember: boolean;
-  unreadCount: number; // Changed from optional to required since API always returns it
+  unreadCount?: number;
 };
 
 type Props = {
@@ -37,9 +37,9 @@ export default function ChannelList({
   const { token } = useUser();
 
   const { data: channels } = useQuery<ExtendedChannel[]>({
-    queryKey: ["/api/channels"],
+    queryKey: ["/api/channels/all"],
     queryFn: async () => {
-      const response = await fetch("/api/channels", {
+      const response = await fetch("/api/channels/all", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -48,8 +48,6 @@ export default function ChannelList({
       return response.json();
     },
   });
-
-  console.log(channels);
 
   const createChannel = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
@@ -70,7 +68,7 @@ export default function ChannelList({
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels/all"] });
       setOpen(false);
       form.reset();
     },
@@ -96,7 +94,7 @@ export default function ChannelList({
               </div>
               {channel.unreadCount > 0 && (
                 <span className="bg-blue-500 rounded-full px-2 py-0.5 text-xs">
-                  {channel.unreadCount}
+                  {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
                 </span>
               )}
             </Button>

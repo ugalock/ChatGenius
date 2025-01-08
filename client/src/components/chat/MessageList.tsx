@@ -87,11 +87,16 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!channelId,
   });
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  const scrollDown = () => {
+    const element = document.getElementById('scroll-container');
+    if (element) {
+      element.scrollTop = element.scrollHeight;
     }
-  }, [messages]);
+  }
+
+  useEffect(() => {
+    scrollDown();
+  }, []);
 
   if (!channelId && !userId) {
     return (
@@ -100,29 +105,6 @@ export default function MessageList({ channelId, userId }: Props) {
       </div>
     );
   }
-
-  // Helper function to determine if a message is a channel message
-  const isChannelMessage = (
-    message: ExtendedMessage,
-  ): message is ExtendedChannelMessage => {
-    return "channelId" in message;
-  };
-
-  const getMessageTitle = () => {
-    if (userId && chatPartner) {
-      return chatPartner.username;
-    }
-    if (channelId && channel) {
-      return `# ${channel.name}`;
-    }
-    return userId ? "Direct Message" : "# channel";
-  };
-
-  // const subtitle = userId
-  //   ? chatPartner?.status === "online"
-  //     ? "Active Now"
-  //     : "Offline"
-  //   : `${messages?.length || 0} messages`;
 
   return (
     <div className="h-full flex flex-col">
@@ -158,7 +140,7 @@ export default function MessageList({ channelId, userId }: Props) {
           <File className="w-5 h-5 text-gray-500 cursor-pointer" />
         </div>
       </div>
-      <ScrollArea ref={scrollRef} className="flex-1 p-4">
+      <ScrollArea id="scroll-container" className="flex-1 p-4">
         <div className="space-y-4">
           {messages?.map((message, i) => {
             const previousMessage = messages[i - 1];

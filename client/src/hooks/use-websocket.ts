@@ -63,6 +63,11 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
                 queryKey: ["/api/channels", data.payload.channelId, "messages"],
               });
               break;
+            case "unread_update":
+              queryClient.invalidateQueries({
+                queryKey: ["/api/channels/all"],
+              });
+              break;
             case "direct_message":
               queryClient.invalidateQueries({
                 queryKey: ["/api/dm", data.payload.fromUserId],
@@ -78,7 +83,7 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
               break;
             case "channel_created":
               queryClient.invalidateQueries({
-                queryKey: ["/api/channels"],
+                queryKey: ["/api/channels/all"],
               });
               break;
             case "error":

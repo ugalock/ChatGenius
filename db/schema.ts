@@ -63,7 +63,7 @@ export const channelMembers = pgTable(
 export const channelUnreads = pgTable(
   "channel_unreads",
   {
-    id: serial("id").primaryKey(),
+    cu_id: serial("cu_id").primaryKey(),
     channelId: integer("channel_id")
       .references(() => channels.id)
       .notNull(),
@@ -73,7 +73,7 @@ export const channelUnreads = pgTable(
     lastReadMessageId: integer("last_read_message_id").references(
       () => messages.id,
     ),
-    unreadCount: integer("unread_count"), 
+    unreadCount: integer("unread_count"),
     updatedAt: timestamp("updated_at").defaultNow(),
   },
   (table) => ({
