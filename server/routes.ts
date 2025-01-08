@@ -48,17 +48,9 @@ export function registerRoutes(app: Express): Server {
             AND ${channelMembers.userId} = ${req.user!.id}
           )`,
           unreadCount: sql<number>`COALESCE(
-            (SELECT COUNT(*)::integer
-            FROM ${messages} m
-            WHERE m.channelId = ${channels.id}
-            AND m.createdAt > COALESCE(
-              (SELECT COALESCE(m2.createdAt, '1970-01-01')
-               FROM ${channelUnreads} cu
-               LEFT JOIN ${messages} m2 ON m2.id = cu.lastReadMessageId
-               WHERE cu.channelId = ${channels.id}
-               AND cu.userId = ${req.user!.id}),
-              '1970-01-01'
-            )), 0
+            (SELECT unread_count FROM ${channelUnreads}
+            WHERE ${channelUnreads.channelId} = ${channels.id}
+            AND ${channelUnreads.userId} = ${req.user!.id}), 0
           )`,
         })
         .from(channels)

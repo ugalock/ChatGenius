@@ -49,6 +49,8 @@ export default function ChannelList({
     },
   });
 
+  console.log(channels);
+
   const createChannel = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
       const response = await fetch("/api/channels", {
@@ -92,7 +94,7 @@ export default function ChannelList({
                 <MessageCircle className="h-4 w-4 mr-2" />
                 <span className="truncate">{channel.name}</span>
               </div>
-              {channel.unreadCount && channel.unreadCount > 0 && (
+              {channel.unreadCount > 0 && (
                 <span className="bg-blue-500 rounded-full px-2 py-0.5 text-xs">
                   {channel.unreadCount}
                 </span>
