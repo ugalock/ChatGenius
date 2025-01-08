@@ -15,6 +15,7 @@ import { useUser } from "@/hooks/use-user";
 import { useForm } from "react-hook-form";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Channel } from "@db/schema";
+import { channel } from "diagnostics_channel";
 
 type ExtendedChannel = Channel & {
   isMember: boolean;

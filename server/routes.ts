@@ -121,13 +121,13 @@ export function registerRoutes(app: Express): Server {
       if (!channel) {
         return res.status(404).json({ message: "Channel not found" });
       }
-      // await db
-      //   .insert(channelMembers)
-      //   .values({
-      //     channelId: parseInt(req.params.channelId),
-      //     userId: req.user!.id,
-      //   })
-      //   .onConflictDoNothing();
+      await db
+        .insert(channelMembers)
+        .values({
+          channelId: parseInt(req.params.channelId),
+          userId: req.user!.id,
+        })
+        .onConflictDoNothing();
       res.json(channel);
     } catch (error) {
       log(`[ERROR] Failed to fetch channel: ${error}`);
@@ -136,7 +136,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Mark channel messages as read
-  app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
+  app.get("/api/channels/:channelId/read", requireAuth, async (req, res) => {
     try {
       const channelId = parseInt(req.params.channelId);
       const userId = req.user!.id;
@@ -170,6 +170,15 @@ export function registerRoutes(app: Express): Server {
             updatedAt: new Date(),
           },
         });
+
+      // Broadcast unread count update
+      ws.broadcast({
+        type: "unread_update",
+        payload: {
+          channelId,
+          messageId: latestMessage.id,
+        },
+      });
 
       res.json({ message: "Messages marked as read" });
     } catch (error) {

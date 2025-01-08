@@ -44,6 +44,14 @@ export default function MessageList({ channelId, userId }: Props) {
         },
       });
       if (!response.ok) throw new Error("Failed to fetch messages");
+
+      if (!userId) {
+        await fetch(`/api/channels/${channelId}/read`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
       return response.json();
     },
     enabled: !!(channelId || userId),
