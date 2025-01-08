@@ -231,8 +231,8 @@ export function registerRoutes(app: Express): Server {
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Build the base query
-        let query = db
+        // Build the query with proper types
+        const baseQuery = db
           .select({
             id: messages.id,
             content: messages.content,
@@ -252,6 +252,7 @@ export function registerRoutes(app: Express): Server {
           .where(eq(messages.channelId, channelId));
 
         // Add pagination conditions
+        let query = baseQuery;
         if (before) {
           query = query.where(lt(messages.id, parseInt(before)));
         } else if (after) {

@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupAuth } from "./auth";
 import { setupVite, serveStatic, log } from "./vite";
 import cors from 'cors';
+import { db } from "@db";
 
 const app = express();
 
@@ -17,46 +18,68 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Setup authentication
-setupAuth(app);
-
-// Debug middleware for request logging
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
 (async () => {
   try {
     log("Starting server initialization...");
 
+    // Test database connection
+    try {
+      await db.query.users.findMany();
+      log("Database connection successful");
+    } catch (dbError) {
+      log(`Database connection failed: ${dbError}`);
+      process.exit(1);
+    }
+
+    // Setup authentication
+    try {
+      setupAuth(app);
+      log("Authentication setup successful");
+    } catch (authError) {
+      log(`Authentication setup failed: ${authError}`);
+      process.exit(1);
+    }
+
+    // Debug middleware for request logging
+    app.use((req, res, next) => {
+      const start = Date.now();
+      const path = req.path;
+      let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+      const originalResJson = res.json;
+      res.json = function (bodyJson, ...args) {
+        capturedJsonResponse = bodyJson;
+        return originalResJson.apply(res, [bodyJson, ...args]);
+      };
+
+      res.on("finish", () => {
+        const duration = Date.now() - start;
+        if (path.startsWith("/api")) {
+          let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+          if (capturedJsonResponse) {
+            logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+          }
+
+          if (logLine.length > 80) {
+            logLine = logLine.slice(0, 79) + "…";
+          }
+
+          log(logLine);
+        }
+      });
+
+      next();
+    });
+
     // Register routes and get server instance
-    const server = registerRoutes(app);
+    let server;
+    try {
+      server = registerRoutes(app);
+      log("Routes registered successfully");
+    } catch (routesError) {
+      log(`Routes registration failed: ${routesError}`);
+      process.exit(1);
+    }
 
     // Error handling middleware
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -67,16 +90,23 @@ app.use((req, res, next) => {
     });
 
     // Setup Vite or static serving
-    if (app.get("env") === "development") {
-      await setupVite(app, server);
-    } else {
-      serveStatic(app);
+    try {
+      if (app.get("env") === "development") {
+        await setupVite(app, server);
+        log("Vite setup completed");
+      } else {
+        serveStatic(app);
+        log("Static serving setup completed");
+      }
+    } catch (setupError) {
+      log(`Frontend setup failed: ${setupError}`);
+      process.exit(1);
     }
 
     // Start server on port 5000
     const PORT = 5000;
     server.listen(PORT, "0.0.0.0", () => {
-      log(`Server started on port ${PORT}`);
+      log(`Server started successfully on port ${PORT}`);
     });
   } catch (error) {
     log(`[FATAL] Server failed to start: ${error}`);

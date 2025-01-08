@@ -41,6 +41,7 @@ export const messages = pgTable("messages", {
   attachments: jsonb("attachments"),
   reactions: jsonb("reactions"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const channelMembers = pgTable(
