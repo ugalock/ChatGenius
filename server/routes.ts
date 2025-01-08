@@ -155,6 +155,35 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // Add this new endpoint after the other channel endpoints
+  app.get("/api/channels/:channelId/read-messages", requireAuth, async (req, res) => {
+    try {
+      const channelId = parseInt(req.params.channelId);
+      const userId = req.user!.id;
+
+      // Get all read messages for this channel and user
+      const readMessages = await db
+        .select({
+          messageId: messageReads.messageId,
+          readAt: messageReads.readAt,
+        })
+        .from(messageReads)
+        .innerJoin(messages, eq(messageReads.messageId, messages.id))
+        .where(
+          and(
+            eq(messages.channelId, channelId),
+            eq(messageReads.userId, userId),
+          ),
+        );
+
+      res.json(readMessages);
+    } catch (error) {
+      log(`[ERROR] Failed to fetch read messages: ${error}`);
+      res.status(500).json({ message: "Failed to fetch read messages" });
+    }
+  });
+
+
   // Update last read message
   app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
     try {

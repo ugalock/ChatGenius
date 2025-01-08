@@ -6,12 +6,13 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { formatDistance } from "date-fns";
 import { Search, Users, File } from "lucide-react";
-import type { Message, User, DirectMessage, Channel } from "@db/schema";
+import type { Message, User, DirectMessage, Channel, MessageRead } from "@db/schema";
 import MessageInput from "./MessageInput";
 
 // Extend the base message types to include the user
 type ExtendedMessage = (Message | DirectMessage) & {
   user: User;
+  isRead?: boolean;
 };
 
 type Props = {
@@ -40,6 +41,31 @@ export default function MessageList({ channelId, userId }: Props) {
   const debounceTimeoutRef = useRef<NodeJS.Timeout>();
   const processedMessagesRef = useRef<Set<number>>(new Set());
   const retryTimeoutsRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+
+  // Query for read messages to initialize the processed set
+  const { data: readMessages } = useQuery<MessageRead[]>({
+    queryKey: ["/api/messages/read", channelId],
+    queryFn: async () => {
+      if (!channelId) return [];
+      const response = await fetch(`/api/channels/${channelId}/read-messages`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch read messages");
+      return response.json();
+    },
+    enabled: !!channelId,
+  });
+
+  // Initialize processedMessagesRef with already read messages
+  useEffect(() => {
+    if (readMessages) {
+      readMessages.forEach((read) => {
+        processedMessagesRef.current.add(read.messageId);
+      });
+    }
+  }, [readMessages]);
 
   // Query for messages with infinite loading
   const {
@@ -89,9 +115,9 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!(channelId || userId),
   });
 
-  // Enhanced updateLastRead function with retry mechanism
+  // Enhanced updateLastRead function with retry mechanism and duplicate prevention
   const updateLastRead = useCallback(async (messageId: number) => {
-    if (!messageId) return;
+    if (!messageId || processedMessagesRef.current.has(messageId)) return;
 
     try {
       console.log(`[MessageTracking] Marking message ${messageId} as read`);
@@ -168,9 +194,9 @@ export default function MessageList({ channelId, userId }: Props) {
     const options: IntersectionObserverInit = {
       root: document.getElementById('scroll-container'),
       // Using multiple thresholds for more granular visibility detection
-      threshold: [0.1, 0.3, 0.5],
+      threshold: [0.1, 0.3, 0.5, 0.7],
       // Add margin to start observing before elements are fully in view
-      rootMargin: '20px 0px',
+      rootMargin: '50px 0px',
     };
 
     const handleIntersection = (entries: IntersectionObserverEntry[]) => {
@@ -178,8 +204,8 @@ export default function MessageList({ channelId, userId }: Props) {
         const messageId = parseInt(entry.target.getAttribute('data-message-id') || '0');
         const userId = parseInt(entry.target.getAttribute('data-user-id') || '0');
 
-        // Skip messages from the current user and already processed messages
-        if (userId === currentUser?.id || processedMessagesRef.current.has(messageId)) {
+        // Skip messages from the current user
+        if (userId === currentUser?.id) {
           return;
         }
 
@@ -192,10 +218,10 @@ export default function MessageList({ channelId, userId }: Props) {
             clearTimeout(debounceTimeoutRef.current);
           }
 
-          // Debounce the update to avoid too many API calls
+          // Reduced debounce time for better responsiveness
           debounceTimeoutRef.current = setTimeout(() => {
             updateLastRead(messageId);
-          }, 200); // Reduced debounce time for better responsiveness
+          }, 100);
         }
       });
     };
@@ -203,11 +229,6 @@ export default function MessageList({ channelId, userId }: Props) {
     console.log('[MessageTracking] Setting up intersection observer for channel:', channelId);
     const observer = new IntersectionObserver(handleIntersection, options);
     observerRef.current = observer;
-
-    // Observe all message elements
-    const messageElements = document.querySelectorAll('[data-message-id]');
-    console.log(`[MessageTracking] Found ${messageElements.length} messages to observe`);
-    messageElements.forEach((element) => observer.observe(element));
 
     // Enhanced cleanup function
     return () => {
@@ -224,6 +245,42 @@ export default function MessageList({ channelId, userId }: Props) {
       processedMessagesRef.current.clear();
     };
   }, [channelId, updateLastRead, currentUser?.id]);
+
+  // Ensure new messages are observed when they're added
+  useEffect(() => {
+    if (!observerRef.current || !channelId) return;
+
+    // Wait for a brief moment to ensure DOM is updated
+    setTimeout(() => {
+      const messageElements = document.querySelectorAll('[data-message-id]');
+      console.log(`[MessageTracking] Observing ${messageElements.length} messages`);
+      messageElements.forEach((element) => {
+        if (element instanceof Element) {
+          observerRef.current?.observe(element);
+        }
+      });
+
+      // Check for initially visible messages
+      const observer = observerRef.current;
+      if (observer) {
+        messageElements.forEach((element) => {
+          if (element instanceof Element) {
+            const messageId = parseInt(element.getAttribute('data-message-id') || '0');
+            const userId = parseInt(element.getAttribute('data-user-id') || '0');
+
+            // Skip if already processed or from current user
+            if (processedMessagesRef.current.has(messageId) || userId === currentUser?.id) {
+              return;
+            }
+
+            // Force an initial intersection check
+            observer.unobserve(element);
+            observer.observe(element);
+          }
+        });
+      }
+    }, 100);
+  }, [messagesData, channelId, currentUser?.id]);
 
   // Save scroll position when leaving channel
   useEffect(() => {
@@ -252,19 +309,6 @@ export default function MessageList({ channelId, userId }: Props) {
       }, 100);
     }
   }, [channelId, userId]);
-
-  // Ensure new messages are observed when they're added
-  useEffect(() => {
-    if (!observerRef.current || !channelId) return;
-
-    const messageElements = document.querySelectorAll('[data-message-id]');
-    console.log(`[MessageTracking] Observing ${messageElements.length} new messages`);
-    messageElements.forEach((element) => {
-      if (element instanceof Element) {
-        observerRef.current?.observe(element);
-      }
-    });
-  }, [messagesData, channelId]);
 
   // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({
