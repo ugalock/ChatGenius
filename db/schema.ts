@@ -56,12 +56,10 @@ export const channelMembers = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => ({
-    // Add unique constraint on channelId and userId
     channelMembersUnique: unique().on(table.channelId, table.userId),
   }),
 );
 
-// New table for tracking unread messages with proper unique constraint
 export const channelUnreads = pgTable(
   "channel_unreads",
   {
@@ -75,11 +73,10 @@ export const channelUnreads = pgTable(
     lastReadMessageId: integer("last_read_message_id").references(
       () => messages.id,
     ),
-    unreadCount: integer("unread_count").default(0).notNull(),
+    unreadCount: integer("unread_count"), 
     updatedAt: timestamp("updated_at").defaultNow(),
   },
   (table) => ({
-    // Add unique constraint on channelId and userId
     channelUserUnique: unique().on(table.channelId, table.userId),
   }),
 );
@@ -99,7 +96,6 @@ export const directMessages = pgTable("direct_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Relations
 export const usersRelations = relations(users, ({ many }) => ({
   messages: many(messages),
   channelMemberships: many(channelMembers),
@@ -150,7 +146,6 @@ export const channelUnreadsRelations = relations(channelUnreads, ({ one }) => ({
   }),
 }));
 
-// Schemas with proper validation
 export const insertUserSchema = createInsertSchema(users, {
   username: z.string().min(3).max(50),
   password: z.string().min(6),
@@ -166,7 +161,6 @@ export const selectMessageSchema = createSelectSchema(messages);
 export const insertChannelUnreadSchema = createInsertSchema(channelUnreads);
 export const selectChannelUnreadSchema = createSelectSchema(channelUnreads);
 
-// Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type SelectUser = typeof users.$inferSelect;

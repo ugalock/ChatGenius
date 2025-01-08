@@ -19,7 +19,7 @@ import { channel } from "diagnostics_channel";
 
 type ExtendedChannel = Channel & {
   isMember: boolean;
-  unreadCount?: number;
+  unreadCount: number; // Changed from optional to required since API always returns it
 };
 
 type Props = {

@@ -47,11 +47,26 @@ export function registerRoutes(app: Express): Server {
             WHERE ${channelMembers.channelId} = ${channels.id}
             AND ${channelMembers.userId} = ${req.user!.id}
           )`,
-          unreadCount: sql<number>`COALESCE(
-            (SELECT unread_count FROM ${channelUnreads}
-            WHERE ${channelUnreads.channelId} = ${channels.id}
-            AND ${channelUnreads.userId} = ${req.user!.id}), 0
-          )`,
+          unreadCount: sql<number>`
+            COALESCE(
+              GREATEST(
+                (SELECT unread_count FROM ${channelUnreads}
+                WHERE ${channelUnreads.channelId} = ${channels.id}
+                AND ${channelUnreads.userId} = ${req.user!.id}),
+                (
+                  SELECT COUNT(*)::integer 
+                  FROM ${messages} m
+                  LEFT JOIN ${channelUnreads} cu 
+                    ON cu.channel_id = ${channels.id} 
+                    AND cu.user_id = ${req.user!.id}
+                  WHERE m.channel_id = ${channels.id}
+                  AND (cu.last_read_message_id IS NULL 
+                    OR m.id > cu.last_read_message_id)
+                )
+              ),
+              0
+            )
+          `,
         })
         .from(channels)
         .orderBy(asc(channels.createdAt));
@@ -121,6 +136,7 @@ export function registerRoutes(app: Express): Server {
       if (!channel) {
         return res.status(404).json({ message: "Channel not found" });
       }
+
       await db
         .insert(channelMembers)
         .values({
@@ -128,6 +144,7 @@ export function registerRoutes(app: Express): Server {
           userId: req.user!.id,
         })
         .onConflictDoNothing();
+
       res.json(channel);
     } catch (error) {
       log(`[ERROR] Failed to fetch channel: ${error}`);
@@ -153,25 +170,23 @@ export function registerRoutes(app: Express): Server {
         return res.json({ message: "No messages to mark as read" });
       }
 
-      // Update or insert the unread tracking record
+      // Update or insert the unread tracking record with lastReadMessageId
       await db
         .insert(channelUnreads)
         .values({
           channelId,
           userId,
           lastReadMessageId: latestMessage.id,
-          unreadCount: 0,
         })
         .onConflictDoUpdate({
           target: [channelUnreads.channelId, channelUnreads.userId],
           set: {
             lastReadMessageId: latestMessage.id,
-            unreadCount: 0,
             updatedAt: new Date(),
           },
         });
 
-      // Broadcast unread count update
+      // Broadcast unread update
       ws.broadcast({
         type: "unread_update",
         payload: {
@@ -188,143 +203,96 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Messages
-  app.get(
-    "/api/channels/:channelId/messages",
-    requireAuth,
-    async (req, res) => {
-      try {
-        const channelMessages = await db
+  app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
+    try {
+      const channelMessages = await db
+        .select({
+          message: messages,
+          user: users,
+        })
+        .from(messages)
+        .innerJoin(users, eq(messages.userId, users.id))
+        .where(eq(messages.channelId, parseInt(req.params.channelId)))
+        .orderBy(asc(messages.createdAt))
+        .limit(50);
+
+      res.json(
+        channelMessages.map(({ message, user }) => ({
+          ...message,
+          user: {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            status: user.status,
+          },
+        })),
+      );
+    } catch (error) {
+      log(`[ERROR] Failed to fetch messages: ${error}`);
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
+    try {
+      const { content } = req.body;
+      const channelId = parseInt(req.params.channelId);
+
+      const result = await db.transaction(async (tx) => {
+        const [message] = await tx
+          .insert(messages)
+          .values({
+            content,
+            userId: req.user!.id,
+            channelId,
+          })
+          .returning();
+
+        const [messageWithUser] = await tx
           .select({
             message: messages,
             user: users,
           })
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
-          .where(eq(messages.channelId, parseInt(req.params.channelId)))
-          .orderBy(asc(messages.createdAt))
-          .limit(50);
+          .where(eq(messages.id, message.id))
+          .limit(1);
 
-        res.json(
-          channelMessages.map(({ message, user }) => ({
-            ...message,
-            user: {
-              id: user.id,
-              username: user.username,
-              avatar: user.avatar,
-              status: user.status,
-            },
-          })),
-        );
-      } catch (error) {
-        log(`[ERROR] Failed to fetch messages: ${error}`);
-        res.status(500).json({ message: "Failed to fetch messages" });
-      }
-    },
-  );
-
-  app.post(
-    "/api/channels/:channelId/messages",
-    requireAuth,
-    async (req, res) => {
-      try {
-        const { content } = req.body;
-        const channelId = parseInt(req.params.channelId);
-
-        // Start a transaction to handle message creation and unread count updates
-        const result = await db.transaction(async (tx) => {
-          // Create the message
-          const [message] = await tx
-            .insert(messages)
-            .values({
-              content,
-              userId: req.user!.id,
-              channelId,
-            })
-            .returning();
-
-          // Get the message with user information
-          const [messageWithUser] = await tx
-            .select({
-              message: messages,
-              user: users,
-            })
-            .from(messages)
-            .innerJoin(users, eq(messages.userId, users.id))
-            .where(eq(messages.id, message.id))
-            .limit(1);
-
-          // Update unread counts for all channel members except the sender
-          const channelMembersList = await tx
-            .select()
-            .from(channelMembers)
-            .where(
-              and(
-                eq(channelMembers.channelId, channelId),
-                sql`${channelMembers.userId} != ${req.user!.id}`,
-              ),
-            );
-
-          // Bulk upsert unread counts
-          if (channelMembersList.length > 0) {
-            await tx
-              .insert(channelUnreads)
-              .values(
-                channelMembersList.map((member) => ({
-                  channelId,
-                  userId: member.userId,
-                  lastReadMessageId: null,
-                  unreadCount: sql`COALESCE(
-                  (SELECT unread_count FROM ${channelUnreads}
-                  WHERE channel_id = ${channelId}
-                  AND user_id = ${member.userId}
-                ), 0) + 1`,
-                })),
-              )
-              .onConflictDoUpdate({
-                target: [channelUnreads.channelId, channelUnreads.userId],
-                set: {
-                  unreadCount: sql`${channelUnreads.unreadCount} + 1`,
-                  updatedAt: new Date(),
-                },
-              });
-          }
-
-          return {
-            ...messageWithUser.message,
-            user: {
-              id: messageWithUser.user.id,
-              username: messageWithUser.user.username,
-              avatar: messageWithUser.user.avatar,
-              status: messageWithUser.user.status,
-            },
-          };
-        });
-
-        // Send message through WebSocket
-        ws.broadcast({
-          type: "message",
-          payload: {
-            ...result,
-            channelId,
+        return {
+          ...messageWithUser.message,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status,
           },
-        });
+        };
+      });
 
-        // Broadcast unread count update
-        ws.broadcast({
-          type: "unread_update",
-          payload: {
-            channelId,
-            messageId: result.id,
-          },
-        });
+      // Send message through WebSocket
+      ws.broadcast({
+        type: "message",
+        payload: {
+          ...result,
+          channelId,
+        },
+      });
 
-        res.json(result);
-      } catch (error) {
-        log(`[ERROR] Failed to post message: ${error}`);
-        res.status(500).json({ message: "Failed to post message" });
-      }
-    },
-  );
+      // Broadcast unread update
+      ws.broadcast({
+        type: "unread_update",
+        payload: {
+          channelId,
+          messageId: result.id,
+        },
+      });
+
+      res.json(result);
+    } catch (error) {
+      log(`[ERROR] Failed to post message: ${error}`);
+      res.status(500).json({ message: "Failed to post message" });
+    }
+  });
 
   // Direct Messages
   app.get("/api/dm/:userId", requireAuth, async (req, res) => {
