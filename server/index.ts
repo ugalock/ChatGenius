@@ -4,6 +4,7 @@ import { setupAuth } from "./auth";
 import { setupVite, serveStatic, log } from "./vite";
 import cors from "cors";
 import { db } from "@db";
+import { createServer } from "net";
 
 const app = express();
 
@@ -20,7 +21,24 @@ app.use(
   }),
 );
 
-(async () => {
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = createServer()
+      .once('error', () => {
+        resolve(false);
+      })
+      .once('listening', () => {
+        tester.once('close', () => {
+          resolve(true);
+        }).close();
+      })
+      .listen(port, '0.0.0.0');
+  });
+}
+
+let serverInstance: ReturnType<typeof registerRoutes> | null = null;
+
+async function startServer() {
   try {
     log("Starting server initialization...");
 
@@ -65,9 +83,8 @@ app.use(
     });
 
     // Register routes and get server instance
-    let server;
     try {
-      server = registerRoutes(app);
+      serverInstance = registerRoutes(app);
       log("Routes registered successfully");
     } catch (routesError) {
       log(`Routes registration failed: ${routesError}`);
@@ -85,24 +102,67 @@ app.use(
     // Setup Vite or static serving
     try {
       if (app.get("env") === "development") {
-        await setupVite(app, server);
+        await setupVite(app, serverInstance);
         log("Vite setup completed");
       } else {
         serveStatic(app);
-        log("Static serving setup completed");
+        log("Static serving completed");
       }
     } catch (setupError) {
       log(`Frontend setup failed: ${setupError}`);
       process.exit(1);
     }
 
-    // Start server on port 5000
     const PORT = 5000;
-    server.listen(PORT, "0.0.0.0", () => {
+
+    // Check if port is available
+    const isAvailable = await isPortAvailable(PORT);
+    if (!isAvailable) {
+      log(`Port ${PORT} is already in use. Please free up the port and try again.`);
+      process.exit(1);
+    }
+
+    // Start server
+    serverInstance.listen(PORT, "0.0.0.0", () => {
       log(`Server started successfully on port ${PORT}`);
     });
+
+    // Handle graceful shutdown
+    process.on('SIGTERM', gracefulShutdown);
+    process.on('SIGINT', gracefulShutdown);
+
   } catch (error) {
     log(`[FATAL] Server failed to start: ${error}`);
     process.exit(1);
   }
-})();
+}
+
+// Graceful shutdown handler
+async function gracefulShutdown() {
+  log('Received shutdown signal. Starting graceful shutdown...');
+
+  try {
+    // Close server first
+    if (serverInstance) {
+      await new Promise((resolve) => {
+        serverInstance!.close(() => {
+          log('Server closed');
+          resolve(undefined);
+        });
+      });
+    }
+
+    // For Drizzle ORM, we don't need to explicitly close the connection
+    // as it uses serverless connections that are automatically managed
+    log('Database connections will be automatically closed');
+
+    log('Graceful shutdown completed');
+    process.exit(0);
+  } catch (error) {
+    log(`Error during shutdown: ${error}`);
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();

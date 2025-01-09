@@ -42,6 +42,7 @@ interface WSMessage {
 }
 
 export function setupWebSocket(server: Server) {
+  let heartbeatInterval: NodeJS.Timeout;
   const wss = new WebSocketServer({
     server,
     path: "/ws",
@@ -80,26 +81,64 @@ export function setupWebSocket(server: Server) {
 
   const clients = new Map<number, ExtendedWebSocket>();
 
-  // Setup heartbeat to detect stale connections
-  const interval = setInterval(() => {
-    wss.clients.forEach((wsClient: WebSocket) => {
-      const ws = wsClient as ExtendedWebSocket;
-      if (!ws.isAlive) {
-        if (ws.userId) {
-          log(`[WS] Client ${ws.userId} failed heartbeat, terminating`);
-          db.update(users)
-            .set({ status: "offline" })
-            .where(eq(users.id, ws.userId))
-            .execute();
-          clients.delete(ws.userId);
-        }
-        return ws.terminate();
-      }
+  function startHeartbeat() {
+    // Clear any existing interval first
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
 
-      ws.isAlive = false;
-      ws.ping();
-    });
-  }, 30000);
+    // Setup heartbeat to detect stale connections
+    heartbeatInterval = setInterval(() => {
+      wss.clients.forEach((wsClient: WebSocket) => {
+        const ws = wsClient as ExtendedWebSocket;
+        if (!ws.isAlive) {
+          if (ws.userId) {
+            log(`[WS] Client ${ws.userId} failed heartbeat, terminating`);
+            updateUserStatus(ws.userId, "offline");
+            clients.delete(ws.userId);
+          }
+          return ws.terminate();
+        }
+
+        ws.isAlive = false;
+        ws.ping();
+      });
+    }, 30000);
+  }
+
+  async function updateUserStatus(userId: number, status: string) {
+    try {
+      await db
+        .update(users)
+        .set({ status })
+        .where(eq(users.id, userId))
+        .execute();
+    } catch (error) {
+      log(`[WS] Error updating user status: ${error}`);
+    }
+  }
+
+  function cleanup() {
+    log("[WS] Starting WebSocket cleanup...");
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
+
+    // Update all connected users to offline
+    const updatePromises = Array.from(clients.keys()).map((userId) =>
+      updateUserStatus(userId, "offline")
+    );
+
+    return Promise.all(updatePromises)
+      .then(() => {
+        clients.clear();
+        wss.close();
+        log("[WS] WebSocket cleanup completed");
+      })
+      .catch((error) => {
+        log(`[WS] Error during cleanup: ${error}`);
+      });
+  }
 
   wss.on("connection", async (wsClient: WebSocket, req) => {
     const ws = wsClient as ExtendedWebSocket;
@@ -134,10 +173,7 @@ export function setupWebSocket(server: Server) {
     clients.set(userId, ws);
 
     // Set user as online
-    await db.update(users)
-      .set({ status: "online" })
-      .where(eq(users.id, userId))
-      .execute();
+    await updateUserStatus(userId, "online");
 
     // Send initial connection success
     try {
@@ -162,11 +198,8 @@ export function setupWebSocket(server: Server) {
         }
 
         const message = JSON.parse(data.toString()) as WSMessage;
-        log(
-          `[WS] Received message type: ${message.type} from user ${ws.userId}`,
-        );
+        log(`[WS] Received message type: ${message.type} from user ${ws.userId}`);
 
-        // Handle auth check message type
         if (message.type === "auth_check") {
           ws.send(
             JSON.stringify({
@@ -192,10 +225,7 @@ export function setupWebSocket(server: Server) {
             JSON.stringify({
               type: "error" as WSMessageType,
               payload: {
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Invalid message format",
+                message: error instanceof Error ? error.message : "Invalid message format",
               },
             }),
           );
@@ -210,10 +240,7 @@ export function setupWebSocket(server: Server) {
     ws.on("close", () => {
       if (ws.userId) {
         log(`[WS] User ${ws.userId} disconnected`);
-        db.update(users)
-          .set({ status: "offline" })
-          .where(eq(users.id, ws.userId))
-          .execute();
+        updateUserStatus(ws.userId, "offline");
         clients.delete(ws.userId);
         broadcast({
           type: "presence",
@@ -223,9 +250,8 @@ export function setupWebSocket(server: Server) {
     });
   });
 
-  wss.on("close", () => {
-    clearInterval(interval);
-  });
+  // Start heartbeat checking
+  startHeartbeat();
 
   function broadcast(message: WSMessage) {
     const data = JSON.stringify(message);
@@ -244,5 +270,6 @@ export function setupWebSocket(server: Server) {
   return {
     broadcast,
     clients,
+    cleanup,
   };
 }
