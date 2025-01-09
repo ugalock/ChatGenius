@@ -37,7 +37,7 @@ interface MessagesResponse {
   prevCursor: string | null;
 }
 
-const SCROLL_THRESHOLD = 500; // Increased threshold for better UX
+const SCROLL_THRESHOLD = 300; // Reduced threshold for better responsiveness
 const MESSAGES_PER_PAGE = 30;
 
 export default function MessageList({ channelId, userId }: Props) {
@@ -91,7 +91,7 @@ export default function MessageList({ channelId, userId }: Props) {
     queryKey: userId
       ? ["/api/dm", userId]
       : ["/api/channels", channelId, "messages"],
-    queryFn: async ({ pageParam = { before: null, after: null } }) => {
+    queryFn: async ({ pageParam = { before: null, after: null } as PageParam }) => {
       console.log("[Query] Fetching messages with params:", pageParam);
       const url = userId
         ? `/api/dm/${userId}`
@@ -127,9 +127,8 @@ export default function MessageList({ channelId, userId }: Props) {
         console.log("[Pagination] No more older messages");
         return undefined;
       }
-      const oldestMessage = lastPage.data[lastPage.data.length - 1];
       return {
-        before: oldestMessage.id.toString(),
+        before: lastPage.data[lastPage.data.length - 1].id.toString(),
         after: null,
       } as PageParam;
     },
@@ -138,82 +137,72 @@ export default function MessageList({ channelId, userId }: Props) {
         console.log("[Pagination] No more newer messages");
         return undefined;
       }
-      const newestMessage = firstPage.data[0];
       return {
         before: null,
-        after: newestMessage.id.toString(),
+        after: firstPage.data[0].id.toString(),
       } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
 
-  // Enhanced scroll management with better position restoration
+  // Optimized scroll handling with better position restoration
   useEffect(() => {
     const scrollContainer = document.getElementById("scroll-container");
     if (!scrollContainer) return;
 
-    const handleScroll = async () => {
-      if (loadingMoreRef.current) {
-        console.log("[Scroll] Skip loading - already in progress");
-        return;
-      }
+    let scrollTimeout: NodeJS.Timeout;
+    const handleScroll = () => {
+      if (loadingMoreRef.current) return;
 
       const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
       const distanceFromTop = scrollTop;
       const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
-      // Load older messages when near the top
+      // Load older messages when near top
       if (distanceFromTop < SCROLL_THRESHOLD && hasNextPage && !isFetchingNextPage) {
         loadingMoreRef.current = true;
-        console.log("[Scroll] Loading older messages...");
+        const previousHeight = scrollHeight;
+        const previousScrollTop = scrollTop;
 
-        try {
-          const previousHeight = scrollHeight;
-          const previousScrollTop = scrollTop;
-
-          await fetchNextPage();
-
-          // Restore scroll position after new content is loaded
-          requestAnimationFrame(() => {
-            if (scrollContainer) {
-              const newHeight = scrollContainer.scrollHeight;
-              const heightDifference = newHeight - previousHeight;
-              scrollContainer.scrollTop = previousScrollTop + heightDifference;
-              console.log("[Scroll] Restored position after loading older messages");
-            }
+        fetchNextPage()
+          .then(() => {
+            // Restore scroll position after loading older messages
+            requestAnimationFrame(() => {
+              if (scrollContainer) {
+                const heightDifference = scrollContainer.scrollHeight - previousHeight;
+                scrollContainer.scrollTop = previousScrollTop + heightDifference;
+              }
+            });
+          })
+          .catch((error) => {
+            console.error("[Scroll] Error loading older messages:", error);
+          })
+          .finally(() => {
+            loadingMoreRef.current = false;
           });
-        } catch (error) {
-          console.error("[Scroll] Error loading older messages:", error);
-        } finally {
-          loadingMoreRef.current = false;
-        }
       }
 
-      // Load newer messages when near the bottom
+      // Load newer messages when near bottom
       if (distanceFromBottom < SCROLL_THRESHOLD && hasPreviousPage && !isFetchingPreviousPage) {
         loadingMoreRef.current = true;
-        console.log("[Scroll] Loading newer messages...");
 
-        try {
-          await fetchPreviousPage();
-          console.log("[Scroll] Successfully loaded newer messages");
-        } catch (error) {
-          console.error("[Scroll] Error loading newer messages:", error);
-        } finally {
-          loadingMoreRef.current = false;
-        }
+        fetchPreviousPage()
+          .catch((error) => {
+            console.error("[Scroll] Error loading newer messages:", error);
+          })
+          .finally(() => {
+            loadingMoreRef.current = false;
+          });
       }
     };
 
-    const debouncedScroll = debounce(handleScroll, 150); // Increased debounce time
+    const debouncedScroll = debounce(handleScroll, 100);
     scrollContainer.addEventListener("scroll", debouncedScroll);
 
     return () => {
       scrollContainer.removeEventListener("scroll", debouncedScroll);
-      if (scrollRestorationTimeoutRef.current) {
-        clearTimeout(scrollRestorationTimeoutRef.current);
-      }
+      clearTimeout(scrollTimeout);
     };
   }, [
     fetchNextPage,
@@ -228,8 +217,8 @@ export default function MessageList({ channelId, userId }: Props) {
   useEffect(() => {
     if (!(channelId || userId)) return;
 
-    const storageKey = channelId 
-      ? `chat-scroll-position-channel-${channelId}` 
+    const storageKey = channelId
+      ? `chat-scroll-position-channel-${channelId}`
       : `chat-scroll-position-user-${userId}`;
 
     const savedPosition = localStorage.getItem(storageKey);
