@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -38,7 +38,6 @@ interface MessagesResponse {
 }
 
 const MESSAGES_PER_PAGE = 30;
-const SCROLL_THRESHOLD = 200;
 
 export default function MessageList({ channelId, userId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -51,9 +50,6 @@ export default function MessageList({ channelId, userId }: Props) {
   const scrollRestorationTimeoutRef = useRef<NodeJS.Timeout>();
   const isInitialLoadRef = useRef(true);
   const loadingMoreRef = useRef(false);
-  const [isAtTop, setIsAtTop] = useState(false);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const previousHeightRef = useRef<number>(0);
 
   // Query for read messages to initialize the processed set
   const { data: readMessages } = useQuery<MessageRead[]>({
@@ -80,7 +76,7 @@ export default function MessageList({ channelId, userId }: Props) {
     }
   }, [readMessages]);
 
-  // Enhanced infinite query configuration
+  // Query for messages with infinite loading
   const {
     data: messagesData,
     fetchNextPage,
@@ -89,11 +85,15 @@ export default function MessageList({ channelId, userId }: Props) {
     hasPreviousPage,
     isFetchingNextPage,
     isFetchingPreviousPage,
-    error,
   } = useInfiniteQuery<MessagesResponse>({
-    queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
+    queryKey: userId
+      ? ["/api/dm", userId]
+      : ["/api/channels", channelId, "messages"],
     queryFn: async ({ pageParam = { before: null, after: null } }) => {
-      const url = userId ? `/api/dm/${userId}` : `/api/channels/${channelId}/messages`;
+      const url = userId
+        ? `/api/dm/${userId}`
+        : `/api/channels/${channelId}/messages`;
+
       const queryParams = new URLSearchParams();
       const typedPageParam = pageParam as PageParam;
 
@@ -111,28 +111,24 @@ export default function MessageList({ channelId, userId }: Props) {
         },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to fetch messages: ${errorText}`);
-      }
-
+      if (!response.ok) throw new Error("Failed to fetch messages");
       return response.json();
     },
     getNextPageParam: (lastPage) => {
-      if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE) {
-        console.log("[Query] No more older messages available");
+      if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE)
         return undefined;
-      }
-      const oldestMessage = lastPage.data[lastPage.data.length - 1];
-      return { before: oldestMessage.id.toString(), after: null } as PageParam;
+      return {
+        before: lastPage.data[0].id.toString(),
+        after: null,
+      } as PageParam;
     },
     getPreviousPageParam: (firstPage) => {
-      if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE) {
-        console.log("[Query] No more newer messages available");
+      if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE)
         return undefined;
-      }
-      const newestMessage = firstPage.data[0];
-      return { before: null, after: newestMessage.id.toString() } as PageParam;
+      return {
+        before: null,
+        after: firstPage.data[firstPage.data.length - 1].id.toString(),
+      } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
@@ -143,70 +139,68 @@ export default function MessageList({ channelId, userId }: Props) {
     const scrollContainer = document.getElementById("scroll-container");
     if (!scrollContainer) return;
 
+    // Load older messages when scrolling up
     const handleScroll = async () => {
-      if (loadingMoreRef.current) {
-        console.log("[Scroll] Skipping fetch - already loading");
-        return;
-      }
+      if (loadingMoreRef.current) return;
 
       const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
       const distanceFromTop = scrollTop;
       const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
-      // Update scroll position states
-      setIsAtTop(distanceFromTop < SCROLL_THRESHOLD);
-      setIsAtBottom(distanceFromBottom < SCROLL_THRESHOLD);
-
       // Load older messages when near the top
-      if (distanceFromTop < SCROLL_THRESHOLD && hasNextPage && !isFetchingNextPage) {
+      if (distanceFromTop < 200 && hasNextPage && !isFetchingNextPage) {
         loadingMoreRef.current = true;
         console.log("[Scroll] Loading older messages...");
 
         // Save current scroll position and heights
-        previousHeightRef.current = scrollHeight;
+        const previousHeight = scrollHeight;
+        const previousScrollTop = scrollTop;
 
         try {
           await fetchNextPage();
 
           // Restore scroll position after new content is loaded
-          requestAnimationFrame(() => {
-            if (scrollContainer) {
-              const newHeight = scrollContainer.scrollHeight;
-              const heightDifference = newHeight - previousHeightRef.current;
-              scrollContainer.scrollTop = scrollTop + heightDifference;
-              console.log(`[Scroll] Restored position with difference: ${heightDifference}px`);
-            }
-          });
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              if (scrollContainer) {
+                const newHeight = scrollContainer.scrollHeight;
+                const heightDifference = newHeight - previousHeight;
+                scrollContainer.scrollTop = previousScrollTop + heightDifference;
+              }
+              loadingMoreRef.current = false;
+            });
+          }, 0);
         } catch (error) {
           console.error("[Scroll] Error loading older messages:", error);
-        } finally {
           loadingMoreRef.current = false;
         }
       }
 
       // Load newer messages when near the bottom
-      if (distanceFromBottom < SCROLL_THRESHOLD && hasPreviousPage && !isFetchingPreviousPage) {
+      if (
+        distanceFromBottom < 200 &&
+        hasPreviousPage &&
+        !isFetchingPreviousPage
+      ) {
         loadingMoreRef.current = true;
         console.log("[Scroll] Loading newer messages...");
 
         try {
           await fetchPreviousPage();
+          loadingMoreRef.current = false;
         } catch (error) {
           console.error("[Scroll] Error loading newer messages:", error);
-        } finally {
           loadingMoreRef.current = false;
         }
       }
     };
 
-    // Enhanced debounce with proper cleanup
-    const debouncedScroll = debounce(handleScroll, 100);
+    const debouncedScroll = debounce(handleScroll, 50);
     scrollContainer.addEventListener("scroll", debouncedScroll);
-
     return () => {
       scrollContainer.removeEventListener("scroll", debouncedScroll);
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
       }
     };
   }, [
@@ -546,7 +540,6 @@ export default function MessageList({ channelId, userId }: Props) {
 
   const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
-  // Update the message list rendering with loading states
   return (
     <div className="h-full flex flex-col">
       <div className="bg-white border-b p-4 flex items-center justify-between">
@@ -582,18 +575,11 @@ export default function MessageList({ channelId, userId }: Props) {
       </div>
 
       <ScrollArea id="scroll-container" ref={scrollRef} className="flex-1 p-4">
-        {error && (
-          <div className="text-center py-2 text-destructive">
-            Error loading messages: {error.message}
-          </div>
-        )}
-
         {isFetchingNextPage && (
-          <div className="text-center py-2 text-muted-foreground animate-pulse">
+          <div className="text-center py-2 text-muted-foreground">
             Loading older messages...
           </div>
         )}
-
         <div className="space-y-4">
           {allMessages.map((message: ExtendedMessage, i: number) => {
             const previousMessage = allMessages[i - 1];
@@ -640,9 +626,8 @@ export default function MessageList({ channelId, userId }: Props) {
             );
           })}
         </div>
-
         {isFetchingPreviousPage && (
-          <div className="text-center py-2 text-muted-foreground animate-pulse">
+          <div className="text-center py-2 text-muted-foreground">
             Loading newer messages...
           </div>
         )}
@@ -660,19 +645,17 @@ export default function MessageList({ channelId, userId }: Props) {
   );
 }
 
-// Enhanced debounce utility with proper typing
+// Utility function for scroll event debouncing
 function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number,
 ): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout | undefined;
-
+  let timeout: NodeJS.Timeout;
   return function executedFunction(...args: Parameters<T>) {
     const later = () => {
-      timeout = undefined;
+      clearTimeout(timeout);
       func(...args);
     };
-
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
