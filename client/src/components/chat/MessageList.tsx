@@ -41,6 +41,9 @@ export default function MessageList({ channelId, userId }: Props) {
   const debounceTimeoutRef = useRef<NodeJS.Timeout>();
   const processedMessagesRef = useRef<Set<number>>(new Set());
   const retryTimeoutsRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+  const scrollRestorationTimeoutRef = useRef<NodeJS.Timeout>();
+  const isInitialLoadRef = useRef(true);
+  const loadingMoreRef = useRef(false);
 
   // Query for read messages to initialize the processed set
   const { data: readMessages } = useQuery<MessageRead[]>({
@@ -84,8 +87,8 @@ export default function MessageList({ channelId, userId }: Props) {
         : `/api/channels/${channelId}/messages`;
 
       const queryParams = new URLSearchParams();
-
       const typedPageParam = pageParam as PageParam;
+
       if (typedPageParam.before) {
         queryParams.append('before', typedPageParam.before);
       }
@@ -105,49 +108,145 @@ export default function MessageList({ channelId, userId }: Props) {
     },
     getNextPageParam: (lastPage) => {
       if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: lastPage.data[lastPage.data.length - 1].id.toString(), after: null } as PageParam;
+      return { before: lastPage.data[0].id.toString(), after: null } as PageParam;
     },
     getPreviousPageParam: (firstPage) => {
       if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: null, after: firstPage.data[0].id.toString() } as PageParam;
+      return { before: null, after: firstPage.data[firstPage.data.length - 1].id.toString() } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
 
-  // Handle infinite scroll with proper loading states
+  // Enhanced infinite scroll with better load triggers and position restoration
   useEffect(() => {
     const scrollContainer = document.getElementById('scroll-container');
     if (!scrollContainer) return;
 
-    const handleScroll = () => {
+    // Load older messages when scrolling up
+    const handleScroll = async () => {
+      if (loadingMoreRef.current) return;
+
       const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+      const distanceFromTop = scrollTop;
+      const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
-      // Load older messages when scrolling up near the top
-      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
+      // Load older messages when near the top
+      if (distanceFromTop < 200 && hasNextPage && !isFetchingNextPage) {
+        loadingMoreRef.current = true;
         console.log('[Scroll] Loading older messages...');
-        // Save current scroll position
-        const currentHeight = scrollHeight - clientHeight;
 
-        fetchNextPage().then(() => {
-          // Restore scroll position after loading
-          if (scrollContainer) {
-            const newHeight = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-            scrollContainer.scrollTop = newHeight - currentHeight + scrollTop;
-          }
-        });
+        // Save current scroll position and heights
+        const previousHeight = scrollHeight;
+        const previousScrollTop = scrollTop;
+
+        try {
+          await fetchNextPage();
+
+          // Restore scroll position after new content is loaded
+          requestAnimationFrame(() => {
+            if (scrollContainer) {
+              const newHeight = scrollContainer.scrollHeight;
+              const heightDifference = newHeight - previousHeight;
+              scrollContainer.scrollTop = previousScrollTop + heightDifference;
+            }
+            loadingMoreRef.current = false;
+          });
+        } catch (error) {
+          console.error('[Scroll] Error loading older messages:', error);
+          loadingMoreRef.current = false;
+        }
       }
 
-      // Load newer messages when scrolling down near the bottom
-      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
+      // Load newer messages when near the bottom
+      if (distanceFromBottom < 200 && hasPreviousPage && !isFetchingPreviousPage) {
+        loadingMoreRef.current = true;
         console.log('[Scroll] Loading newer messages...');
-        fetchPreviousPage();
+
+        try {
+          await fetchPreviousPage();
+          loadingMoreRef.current = false;
+        } catch (error) {
+          console.error('[Scroll] Error loading newer messages:', error);
+          loadingMoreRef.current = false;
+        }
       }
     };
 
-    scrollContainer.addEventListener('scroll', handleScroll);
-    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+    const debouncedScroll = debounce(handleScroll, 150);
+    scrollContainer.addEventListener('scroll', debouncedScroll);
+    return () => {
+      scrollContainer.removeEventListener('scroll', debouncedScroll);
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
+      }
+    };
   }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
+
+  // Improved scroll position persistence
+  useEffect(() => {
+    const storageKey = `chat-scroll-position-${channelId || userId}`;
+
+    // Save position when unmounting or changing channels
+    return () => {
+      if (scrollRef.current) {
+        const position = scrollRef.current.scrollTop;
+        const maxScroll = scrollRef.current.scrollHeight - scrollRef.current.clientHeight;
+
+        // Only save if we're not at the bottom
+        if (maxScroll - position > 100) {
+          localStorage.setItem(storageKey, position.toString());
+          console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
+        } else {
+          localStorage.removeItem(storageKey);
+          console.log(`[Scroll] Cleared saved position for ${storageKey}`);
+        }
+      }
+    };
+  }, [channelId, userId]);
+
+  // Enhanced scroll position restoration
+  useEffect(() => {
+    const storageKey = `chat-scroll-position-${channelId || userId}`;
+    const savedPosition = localStorage.getItem(storageKey);
+
+    if (scrollRef.current && savedPosition && isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+
+      // Use a more robust approach to restore scroll position
+      const restorePosition = () => {
+        if (scrollRef.current) {
+          const targetPosition = parseInt(savedPosition);
+          scrollRef.current.scrollTop = targetPosition;
+
+          // Verify scroll position was set correctly
+          if (Math.abs(scrollRef.current.scrollTop - targetPosition) > 10) {
+            // If position wasn't set correctly, try again
+            scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 50);
+          } else {
+            console.log(`[Scroll] Successfully restored position ${targetPosition}`);
+          }
+        }
+      };
+
+      // Initial attempt to restore scroll position
+      scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 100);
+    } else if (!savedPosition) {
+      // If no saved position, scroll to bottom on initial load
+      const scrollToBottom = () => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      };
+      scrollRestorationTimeoutRef.current = setTimeout(scrollToBottom, 100);
+    }
+
+    return () => {
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
+      }
+    };
+  }, [channelId, userId, messagesData]);
 
   // Enhanced updateLastRead function with retry mechanism and duplicate prevention
   const updateLastRead = useCallback(async (messageId: number) => {
@@ -293,6 +392,7 @@ export default function MessageList({ channelId, userId }: Props) {
     }, 100);
   }, [messagesData, channelId, currentUser?.id]);
 
+
   // Save scroll position when leaving channel
   useEffect(() => {
     const storageKey = `chat-scroll-position-${channelId || userId}`;
@@ -407,7 +507,9 @@ export default function MessageList({ channelId, userId }: Props) {
 
       <ScrollArea id="scroll-container" ref={scrollRef} className="flex-1 p-4">
         {isFetchingNextPage && (
-          <div className="text-center py-2">Loading older messages...</div>
+          <div className="text-center py-2 text-muted-foreground">
+            Loading older messages...
+          </div>
         )}
         <div className="space-y-4">
           {allMessages.map((message: ExtendedMessage, i: number) => {
@@ -456,7 +558,9 @@ export default function MessageList({ channelId, userId }: Props) {
           })}
         </div>
         {isFetchingPreviousPage && (
-          <div className="text-center py-2">Loading newer messages...</div>
+          <div className="text-center py-2 text-muted-foreground">
+            Loading newer messages...
+          </div>
         )}
       </ScrollArea>
 
@@ -470,4 +574,20 @@ export default function MessageList({ channelId, userId }: Props) {
       </div>
     </div>
   );
+}
+
+// Utility function for scroll event debouncing
+function debounce<T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout;
+  return function executedFunction(...args: Parameters<T>) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
 }
