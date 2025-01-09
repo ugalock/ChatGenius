@@ -59,8 +59,8 @@ export function registerRoutes(app: Express): Server {
             COALESCE(
               (
                 SELECT COUNT(messages.id)::integer 
-                FROM ${messages} msg
-                WHERE msg.channel_id = channels.id
+                FROM ${messages}
+                WHERE channel_id = channels.id
                 AND NOT EXISTS (
                   SELECT 1 FROM ${messageReads} mr
                   WHERE mr.message_id = messages.id
@@ -292,14 +292,20 @@ export function registerRoutes(app: Express): Server {
 
         // If we fetched with 'before', we need to reverse the order to maintain
         // chronological order (oldest first)
-        const orderedMessages = before ? [...channelMessages].reverse() : channelMessages;
+        const orderedMessages = before
+          ? [...channelMessages].reverse()
+          : channelMessages;
 
         const response = {
           data: orderedMessages,
-          nextCursor: channelMessages.length === messageLimit ? 
-            orderedMessages[0].id.toString() : null,
-          prevCursor: channelMessages.length === messageLimit ? 
-            orderedMessages[orderedMessages.length - 1].id.toString() : null,
+          nextCursor:
+            channelMessages.length === messageLimit
+              ? orderedMessages[0].id.toString()
+              : null,
+          prevCursor:
+            channelMessages.length === messageLimit
+              ? orderedMessages[orderedMessages.length - 1].id.toString()
+              : null,
         };
 
         res.json(response);
