@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, InfiniteData } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -7,7 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { formatDistance } from "date-fns";
 import { Search, Users, File } from "lucide-react";
 import { ErrorBoundary } from "react-error-boundary";
-import type { Message, User, DirectMessage, Channel, MessageRead } from "@db/schema";
+import type { Message, User, DirectMessage, Channel } from "@db/schema";
 import MessageInput from "./MessageInput";
 
 type ExtendedMessage = (Message | DirectMessage) & {
@@ -52,15 +52,33 @@ export default function MessageList({ channelId, userId }: Props) {
   const loadingMoreRef = useRef(false);
   const scrollToBottomRef = useRef(false);
 
-  useEffect(() => {
-    setIsMounted(true);
-    return () => {
-      setIsMounted(false);
-      // Cleanup timeouts
-      retryTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-      retryTimeoutsRef.current.clear();
-    };
-  }, []);
+  // Query for chat partner in DM
+  const { data: chatPartner } = useQuery<User>({
+    queryKey: ["/api/users", userId],
+    queryFn: async () => {
+      if (!userId || !token) throw new Error("Missing userId or token");
+      const response = await fetch(`/api/users/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch user");
+      return response.json();
+    },
+    enabled: !!userId && !!token,
+  });
+
+  // Query for channel information
+  const { data: channel } = useQuery<Channel>({
+    queryKey: ["/api/channels", channelId],
+    queryFn: async () => {
+      if (!channelId || !token) throw new Error("Missing channelId or token");
+      const response = await fetch(`/api/channels/${channelId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch channel");
+      return response.json();
+    },
+    enabled: !!channelId && !!token,
+  });
 
   const {
     data: messagesData,
@@ -70,20 +88,21 @@ export default function MessageList({ channelId, userId }: Props) {
     hasPreviousPage,
     isFetchingNextPage,
     isFetchingPreviousPage,
-  } = useInfiniteQuery<MessagesResponse>({
-    queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId, "messages"],
-    queryFn: async ({ pageParam = { before: null, after: null } }) => {
+  } = useInfiniteQuery<MessagesResponse, Error, InfiniteData<MessagesResponse>, [string, (number | null)], PageParam>({
+    queryKey: userId ? ["/api/dm", userId] : ["/api/channels", channelId],
+    queryFn: async ({ pageParam }) => {
       if (!token) throw new Error("No authentication token");
 
+      const param = pageParam ?? { before: null, after: null };
       const url = userId ? `/api/dm/${userId}` : `/api/channels/${channelId}/messages`;
       const queryParams = new URLSearchParams({
         limit: MESSAGES_PER_PAGE.toString(),
-        ...(pageParam.before && { before: pageParam.before }),
-        ...(pageParam.after && { after: pageParam.after })
+        ...(param.before && { before: param.before }),
+        ...(param.after && { after: param.after }),
       });
 
       const response = await fetch(`${url}?${queryParams}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!response.ok) {
@@ -98,9 +117,17 @@ export default function MessageList({ channelId, userId }: Props) {
       firstPage.prevCursor ? { before: null, after: firstPage.prevCursor } : undefined,
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId) && !!token,
-    retry: 1,
     staleTime: 30000, // Consider data fresh for 30 seconds
   });
+
+  useEffect(() => {
+    setIsMounted(true);
+    return () => {
+      setIsMounted(false);
+      retryTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      retryTimeoutsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isMounted) return;
@@ -111,12 +138,12 @@ export default function MessageList({ channelId, userId }: Props) {
     const handleScroll = async () => {
       if (loadingMoreRef.current) return;
 
-      try {
-        const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-        const distanceFromTop = scrollTop;
-        const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
-        const threshold = Math.min(clientHeight * 0.3, 300);
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+      const distanceFromTop = scrollTop;
+      const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+      const threshold = Math.min(clientHeight * 0.3, 300);
 
+      try {
         if (distanceFromTop < threshold && hasNextPage && !isFetchingNextPage) {
           loadingMoreRef.current = true;
           const previousHeight = scrollHeight;
@@ -135,15 +162,9 @@ export default function MessageList({ channelId, userId }: Props) {
           loadingMoreRef.current = true;
           await fetchPreviousPage();
           loadingMoreRef.current = false;
-
-          if (scrollToBottomRef.current) {
-            requestAnimationFrame(() => {
-              scrollContainer.scrollTop = scrollContainer.scrollHeight;
-            });
-          }
         }
       } catch (error) {
-        console.error("[Scroll] Error during scroll handling:", error);
+        console.error("[MessageList] Error during scroll handling:", error);
         loadingMoreRef.current = false;
       }
     };
@@ -198,7 +219,7 @@ export default function MessageList({ channelId, userId }: Props) {
             localStorage.removeItem(storageKey);
           }
         } catch (error) {
-          console.error("[Scroll] Error saving position:", error);
+          console.error("[MessageList] Error saving scroll position:", error);
         }
       };
 
@@ -208,47 +229,9 @@ export default function MessageList({ channelId, userId }: Props) {
         window.removeEventListener('beforeunload', savePosition);
       };
     } catch (error) {
-      console.error("[Scroll] Error managing scroll position:", error);
+      console.error("[MessageList] Error managing scroll position:", error);
     }
   }, [isMounted, channelId, userId, messagesData]);
-
-  // Message visibility tracking with error boundaries
-  useEffect(() => {
-    if (!isMounted || !channelId || !currentUser?.id) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-
-          const messageId = parseInt(entry.target.getAttribute("data-message-id") || "0");
-          const userId = parseInt(entry.target.getAttribute("data-user-id") || "0");
-
-          if (messageId && userId !== currentUser.id) {
-            try {
-              updateMessageReadStatus(messageId);
-            } catch (error) {
-              console.error("[Message Tracking] Failed to update read status:", error);
-            }
-          }
-        });
-      },
-      {
-        root: document.getElementById("scroll-container"),
-        threshold: 0.5,
-        rootMargin: "50px 0px",
-      }
-    );
-
-    const messageElements = document.querySelectorAll("[data-message-id]");
-    messageElements.forEach((element) => {
-      if (element instanceof Element) {
-        observer.observe(element);
-      }
-    });
-
-    return () => observer.disconnect();
-  }, [isMounted, channelId, currentUser?.id, messagesData]);
 
   const updateMessageReadStatus = useCallback(async (messageId: number) => {
     if (!messageId || !isMounted || processedMessagesRef.current.has(messageId)) return;
@@ -268,8 +251,7 @@ export default function MessageList({ channelId, userId }: Props) {
 
       processedMessagesRef.current.add(messageId);
     } catch (error) {
-      console.error("[MessageTracking] Error:", error);
-      // Retry after 1 second
+      console.error("[MessageList] Error marking message as read:", error);
       const retryTimeout = setTimeout(() => {
         processedMessagesRef.current.delete(messageId);
         updateMessageReadStatus(messageId);
@@ -286,14 +268,13 @@ export default function MessageList({ channelId, userId }: Props) {
     );
   }
 
-  const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
+  const allMessages = messagesData?.pages.flatMap(page => page.data) || [];
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <div className="h-full flex flex-col">
         <div className="bg-white border-b p-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Chat header content */}
             <div>
               <h2 className="text-xl font-semibold">
                 {userId ? chatPartner?.username : channel?.name && `#${channel.name}`}
