@@ -160,14 +160,16 @@ export default function MessageList({ channelId, userId }: Props) {
           await fetchNextPage();
 
           // Restore scroll position after new content is loaded
-          requestAnimationFrame(() => {
-            if (scrollContainer) {
-              const newHeight = scrollContainer.scrollHeight;
-              const heightDifference = newHeight - previousHeight;
-              scrollContainer.scrollTop = previousScrollTop + heightDifference;
-            }
-            loadingMoreRef.current = false;
-          });
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              if (scrollContainer) {
+                const newHeight = scrollContainer.scrollHeight;
+                const heightDifference = newHeight - previousHeight;
+                scrollContainer.scrollTop = previousScrollTop + heightDifference;
+              }
+              loadingMoreRef.current = false;
+            });
+          }, 0);
         } catch (error) {
           console.error("[Scroll] Error loading older messages:", error);
           loadingMoreRef.current = false;
@@ -193,7 +195,7 @@ export default function MessageList({ channelId, userId }: Props) {
       }
     };
 
-    const debouncedScroll = debounce(handleScroll, 150);
+    const debouncedScroll = debounce(handleScroll, 50);
     scrollContainer.addEventListener("scroll", debouncedScroll);
     return () => {
       scrollContainer.removeEventListener("scroll", debouncedScroll);
@@ -210,33 +212,9 @@ export default function MessageList({ channelId, userId }: Props) {
     isFetchingPreviousPage,
   ]);
 
-  // Improved scroll position persistence
-  useEffect(() => {
-    if (!(channelId || userId)) return;
-    const storageKey = `chat-scroll-position-${channelId || userId}`;
-
-    // Save position when unmounting or changing channels
-    return () => {
-      if (scrollRef.current) {
-        const position = scrollRef.current.scrollTop;
-        const maxScroll =
-          scrollRef.current.scrollHeight - scrollRef.current.clientHeight;
-
-        // Only save if we're not at the bottom
-        if (maxScroll - position > 100) {
-          localStorage.setItem(storageKey, position.toString());
-          console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
-        } else {
-          localStorage.removeItem(storageKey);
-          console.log(`[Scroll] Cleared saved position for ${storageKey}`);
-        }
-      }
-    };
-  }, [channelId, userId]);
-
   // Enhanced scroll position restoration
   useEffect(() => {
-    const storageKey = `chat-scroll-position-${channelId || userId}`;
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (scrollRef.current && savedPosition && isInitialLoadRef.current) {
@@ -361,12 +339,12 @@ export default function MessageList({ channelId, userId }: Props) {
         const messageId = parseInt(
           entry.target.getAttribute("data-message-id") || "0",
         );
-        const userId = parseInt(
+        const uid = parseInt(
           entry.target.getAttribute("data-user-id") || "0",
         );
 
         // Skip messages from the current user
-        if (userId === currentUser?.id) {
+        if (uid === userId) {
           return;
         }
 
@@ -411,6 +389,30 @@ export default function MessageList({ channelId, userId }: Props) {
       processedMessagesRef.current.clear();
     };
   }, [channelId, updateLastRead, currentUser?.id]);
+
+  // Improved scroll position persistence
+  useEffect(() => {
+    if (!(channelId || userId)) return;
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+
+    // Save position when unmounting or changing channels
+    return () => {
+      if (scrollRef.current) {
+        const position = scrollRef.current.scrollTop;
+        const maxScroll =
+          scrollRef.current.scrollHeight - scrollRef.current.clientHeight;
+
+        // Only save if we're not at the bottom
+        if (maxScroll - position > 100) {
+          localStorage.setItem(storageKey, position.toString());
+          console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
+        } else {
+          localStorage.removeItem(storageKey);
+          console.log(`[Scroll] Cleared saved position for ${storageKey}`);
+        }
+      }
+    };
+  }, [channelId, userId, updateLastRead]);
 
   // Ensure new messages are observed when they're added
   useEffect(() => {
@@ -459,7 +461,10 @@ export default function MessageList({ channelId, userId }: Props) {
 
   // Save scroll position when leaving channel
   useEffect(() => {
-    const storageKey = `chat-scroll-position-${channelId || userId}`;
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+    if (!storageKey) {
+      return;
+    }
 
     // Save position when unmounting
     return () => {
@@ -472,7 +477,7 @@ export default function MessageList({ channelId, userId }: Props) {
 
   // Restore scroll position when mounting
   useEffect(() => {
-    const storageKey = `chat-scroll-position-${channelId || userId}`;
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (scrollRef.current && savedPosition) {
