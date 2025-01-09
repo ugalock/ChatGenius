@@ -255,7 +255,7 @@ export function registerRoutes(app: Express): Server {
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Base query with proper types
+        // Base query to get messages with user info
         let query = db
           .select({
             id: messages.id,
@@ -282,26 +282,21 @@ export function registerRoutes(app: Express): Server {
           query = query.where(gt(messages.id, parseInt(after)));
         }
 
-        // Execute query with ordering and limit
+        // Get messages ordered by creation time
         const channelMessages = await query
-          .orderBy(after ? asc(messages.createdAt) : desc(messages.createdAt))
+          .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
-        // Format response
+        // If we fetched with 'before', we need to reverse the order to maintain
+        // chronological order (oldest first)
+        const orderedMessages = before ? [...channelMessages].reverse() : channelMessages;
+
         const response = {
-          data: channelMessages,
-          nextCursor:
-            channelMessages.length === messageLimit
-              ? after
-                ? channelMessages[channelMessages.length - 1].id.toString()
-                : channelMessages[0].id.toString()
-              : null,
-          prevCursor:
-            channelMessages.length === messageLimit
-              ? after
-                ? null
-                : channelMessages[channelMessages.length - 1].id.toString()
-              : null,
+          data: orderedMessages,
+          nextCursor: channelMessages.length === messageLimit ? 
+            orderedMessages[0].id.toString() : null,
+          prevCursor: channelMessages.length === messageLimit ? 
+            orderedMessages[orderedMessages.length - 1].id.toString() : null,
         };
 
         res.json(response);

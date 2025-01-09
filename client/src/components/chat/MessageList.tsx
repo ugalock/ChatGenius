@@ -105,15 +105,49 @@ export default function MessageList({ channelId, userId }: Props) {
     },
     getNextPageParam: (lastPage) => {
       if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: lastPage.data[0].id.toString(), after: null } as PageParam;
+      return { before: lastPage.data[lastPage.data.length - 1].id.toString(), after: null } as PageParam;
     },
     getPreviousPageParam: (firstPage) => {
       if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE) return undefined;
-      return { before: null, after: firstPage.data[firstPage.data.length - 1].id.toString() } as PageParam;
+      return { before: null, after: firstPage.data[0].id.toString() } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
+
+  // Handle infinite scroll with proper loading states
+  useEffect(() => {
+    const scrollContainer = document.getElementById('scroll-container');
+    if (!scrollContainer) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+
+      // Load older messages when scrolling up near the top
+      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
+        console.log('[Scroll] Loading older messages...');
+        // Save current scroll position
+        const currentHeight = scrollHeight - clientHeight;
+
+        fetchNextPage().then(() => {
+          // Restore scroll position after loading
+          if (scrollContainer) {
+            const newHeight = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+            scrollContainer.scrollTop = newHeight - currentHeight + scrollTop;
+          }
+        });
+      }
+
+      // Load newer messages when scrolling down near the bottom
+      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
+        console.log('[Scroll] Loading newer messages...');
+        fetchPreviousPage();
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll);
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
 
   // Enhanced updateLastRead function with retry mechanism and duplicate prevention
   const updateLastRead = useCallback(async (messageId: number) => {
@@ -163,29 +197,6 @@ export default function MessageList({ channelId, userId }: Props) {
       processedMessagesRef.current.delete(messageId);
     }
   }, [token]);
-
-  // Handle infinite scroll
-  useEffect(() => {
-    const scrollContainer = document.getElementById('scroll-container');
-    if (!scrollContainer) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-
-      // Load older messages when scrolling up
-      if (scrollTop < 100 && hasNextPage && !isFetchingNextPage) {
-        fetchNextPage();
-      }
-
-      // Load newer messages when scrolling down
-      if (scrollHeight - (scrollTop + clientHeight) < 100 && hasPreviousPage && !isFetchingPreviousPage) {
-        fetchPreviousPage();
-      }
-    };
-
-    scrollContainer.addEventListener('scroll', handleScroll);
-    return () => scrollContainer.removeEventListener('scroll', handleScroll);
-  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
 
   // Enhanced intersection observer setup with better visibility tracking
   useEffect(() => {
