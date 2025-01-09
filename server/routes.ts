@@ -60,7 +60,7 @@ export function registerRoutes(app: Express): Server {
               (
                 SELECT COUNT(messages.id)::integer 
                 FROM ${messages}
-                WHERE channel_id = channels.id
+                WHERE channel_id = channels.id AND messages.user_id != ${req.user!.id}
                 AND NOT EXISTS (
                   SELECT 1 FROM ${messageReads} mr
                   WHERE mr.message_id = messages.id
