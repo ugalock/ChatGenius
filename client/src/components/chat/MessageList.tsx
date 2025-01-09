@@ -37,7 +37,6 @@ interface MessagesResponse {
   prevCursor: string | null;
 }
 
-const SCROLL_THRESHOLD = 300; // Reduced threshold for better responsiveness
 const MESSAGES_PER_PAGE = 30;
 
 export default function MessageList({ channelId, userId }: Props) {
@@ -86,23 +85,23 @@ export default function MessageList({ channelId, userId }: Props) {
     hasPreviousPage,
     isFetchingNextPage,
     isFetchingPreviousPage,
-    isLoading,
   } = useInfiniteQuery<MessagesResponse>({
     queryKey: userId
       ? ["/api/dm", userId]
       : ["/api/channels", channelId, "messages"],
-    queryFn: async ({ pageParam = { before: null, after: null } as PageParam }) => {
-      console.log("[Query] Fetching messages with params:", pageParam);
+    queryFn: async ({ pageParam = { before: null, after: null } }) => {
       const url = userId
         ? `/api/dm/${userId}`
         : `/api/channels/${channelId}/messages`;
 
       const queryParams = new URLSearchParams();
-      if (pageParam.before) {
-        queryParams.append("before", pageParam.before);
+      const typedPageParam = pageParam as PageParam;
+
+      if (typedPageParam.before) {
+        queryParams.append("before", typedPageParam.before);
       }
-      if (pageParam.after) {
-        queryParams.append("after", pageParam.after);
+      if (typedPageParam.after) {
+        queryParams.append("after", typedPageParam.after);
       }
       queryParams.append("limit", MESSAGES_PER_PAGE.toString());
 
@@ -112,97 +111,97 @@ export default function MessageList({ channelId, userId }: Props) {
         },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("[Query] Failed to fetch messages:", errorText);
-        throw new Error(errorText);
-      }
-
-      const data = await response.json();
-      console.log("[Query] Fetched messages:", data);
-      return data;
+      if (!response.ok) throw new Error("Failed to fetch messages");
+      return response.json();
     },
     getNextPageParam: (lastPage) => {
-      if (!lastPage.data?.length || lastPage.data.length < MESSAGES_PER_PAGE) {
-        console.log("[Pagination] No more older messages");
+      if (!lastPage.data || lastPage.data.length < MESSAGES_PER_PAGE)
         return undefined;
-      }
       return {
-        before: lastPage.data[lastPage.data.length - 1].id.toString(),
+        before: lastPage.data[0].id.toString(),
         after: null,
       } as PageParam;
     },
     getPreviousPageParam: (firstPage) => {
-      if (!firstPage.data?.length || firstPage.data.length < MESSAGES_PER_PAGE) {
-        console.log("[Pagination] No more newer messages");
+      if (!firstPage.data || firstPage.data.length < MESSAGES_PER_PAGE)
         return undefined;
-      }
       return {
         before: null,
-        after: firstPage.data[0].id.toString(),
+        after: firstPage.data[firstPage.data.length - 1].id.toString(),
       } as PageParam;
     },
     initialPageParam: { before: null, after: null } as PageParam,
     enabled: !!(channelId || userId),
   });
 
-  // Optimized scroll handling with better position restoration
+  // Enhanced infinite scroll with better load triggers and position restoration
   useEffect(() => {
     const scrollContainer = document.getElementById("scroll-container");
     if (!scrollContainer) return;
 
-    let scrollTimeout: NodeJS.Timeout;
-    const handleScroll = () => {
+    // Load older messages when scrolling up
+    const handleScroll = async () => {
       if (loadingMoreRef.current) return;
 
       const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
       const distanceFromTop = scrollTop;
       const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
-      // Load older messages when near top
-      if (distanceFromTop < SCROLL_THRESHOLD && hasNextPage && !isFetchingNextPage) {
+      // Load older messages when near the top
+      if (distanceFromTop < 200 && hasNextPage && !isFetchingNextPage) {
         loadingMoreRef.current = true;
+        console.log("[Scroll] Loading older messages...");
+
+        // Save current scroll position and heights
         const previousHeight = scrollHeight;
         const previousScrollTop = scrollTop;
 
-        fetchNextPage()
-          .then(() => {
-            // Restore scroll position after loading older messages
+        try {
+          await fetchNextPage();
+
+          // Restore scroll position after new content is loaded
+          setTimeout(() => {
             requestAnimationFrame(() => {
               if (scrollContainer) {
-                const heightDifference = scrollContainer.scrollHeight - previousHeight;
+                const newHeight = scrollContainer.scrollHeight;
+                const heightDifference = newHeight - previousHeight;
                 scrollContainer.scrollTop = previousScrollTop + heightDifference;
               }
+              loadingMoreRef.current = false;
             });
-          })
-          .catch((error) => {
-            console.error("[Scroll] Error loading older messages:", error);
-          })
-          .finally(() => {
-            loadingMoreRef.current = false;
-          });
+          }, 0);
+        } catch (error) {
+          console.error("[Scroll] Error loading older messages:", error);
+          loadingMoreRef.current = false;
+        }
       }
 
-      // Load newer messages when near bottom
-      if (distanceFromBottom < SCROLL_THRESHOLD && hasPreviousPage && !isFetchingPreviousPage) {
+      // Load newer messages when near the bottom
+      if (
+        distanceFromBottom < 200 &&
+        hasPreviousPage &&
+        !isFetchingPreviousPage
+      ) {
         loadingMoreRef.current = true;
+        console.log("[Scroll] Loading newer messages...");
 
-        fetchPreviousPage()
-          .catch((error) => {
-            console.error("[Scroll] Error loading newer messages:", error);
-          })
-          .finally(() => {
-            loadingMoreRef.current = false;
-          });
+        try {
+          await fetchPreviousPage();
+          loadingMoreRef.current = false;
+        } catch (error) {
+          console.error("[Scroll] Error loading newer messages:", error);
+          loadingMoreRef.current = false;
+        }
       }
     };
 
-    const debouncedScroll = debounce(handleScroll, 100);
+    const debouncedScroll = debounce(handleScroll, 50);
     scrollContainer.addEventListener("scroll", debouncedScroll);
-
     return () => {
       scrollContainer.removeEventListener("scroll", debouncedScroll);
-      clearTimeout(scrollTimeout);
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
+      }
     };
   }, [
     fetchNextPage,
@@ -213,50 +212,50 @@ export default function MessageList({ channelId, userId }: Props) {
     isFetchingPreviousPage,
   ]);
 
-  // Consolidated scroll position restoration
+  // Enhanced scroll position restoration
   useEffect(() => {
-    if (!(channelId || userId)) return;
-
-    const storageKey = channelId
-      ? `chat-scroll-position-channel-${channelId}`
-      : `chat-scroll-position-user-${userId}`;
-
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
     const savedPosition = localStorage.getItem(storageKey);
-    const scrollContainer = document.getElementById("scroll-container");
 
-    if (scrollContainer && isInitialLoadRef.current) {
+    if (scrollRef.current && savedPosition && isInitialLoadRef.current) {
       isInitialLoadRef.current = false;
 
+      // Use a more robust approach to restore scroll position
       const restorePosition = () => {
-        if (!scrollContainer) return;
-
-        if (savedPosition) {
+        if (scrollRef.current) {
           const targetPosition = parseInt(savedPosition);
-          scrollContainer.scrollTop = targetPosition;
-          console.log(`[Scroll] Restored to position ${targetPosition}`);
-        } else {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-          console.log("[Scroll] Scrolled to bottom (no saved position)");
+          scrollRef.current.scrollTop = targetPosition;
+
+          // Verify scroll position was set correctly
+          if (Math.abs(scrollRef.current.scrollTop - targetPosition) > 10) {
+            // If position wasn't set correctly, try again
+            scrollRestorationTimeoutRef.current = setTimeout(
+              restorePosition,
+              50,
+            );
+          } else {
+            console.log(
+              `[Scroll] Successfully restored position ${targetPosition}`,
+            );
+          }
         }
       };
 
-      // Wait for content to be rendered
+      // Initial attempt to restore scroll position
       scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 100);
+    } else if (!savedPosition) {
+      // If no saved position, scroll to bottom on initial load
+      const scrollToBottom = () => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      };
+      scrollRestorationTimeoutRef.current = setTimeout(scrollToBottom, 100);
     }
 
-    // Save position on cleanup
     return () => {
-      if (scrollContainer && !isInitialLoadRef.current) {
-        const position = scrollContainer.scrollTop;
-        const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-
-        if (maxScroll - position > 100) {
-          localStorage.setItem(storageKey, position.toString());
-          console.log(`[Scroll] Saved position ${position}`);
-        } else {
-          localStorage.removeItem(storageKey);
-          console.log("[Scroll] Cleared saved position (at bottom)");
-        }
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
       }
     };
   }, [channelId, userId, messagesData]);
@@ -391,6 +390,105 @@ export default function MessageList({ channelId, userId }: Props) {
     };
   }, [channelId, updateLastRead, currentUser?.id]);
 
+  // Improved scroll position persistence
+  useEffect(() => {
+    if (!(channelId || userId)) return;
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+
+    // Save position when unmounting or changing channels
+    return () => {
+      if (scrollRef.current) {
+        const position = scrollRef.current.scrollTop;
+        const maxScroll =
+          scrollRef.current.scrollHeight - scrollRef.current.clientHeight;
+
+        // Only save if we're not at the bottom
+        if (maxScroll - position > 100) {
+          localStorage.setItem(storageKey, position.toString());
+          console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
+        } else {
+          localStorage.removeItem(storageKey);
+          console.log(`[Scroll] Cleared saved position for ${storageKey}`);
+        }
+      }
+    };
+  }, [channelId, userId, updateLastRead]);
+
+  // Ensure new messages are observed when they're added
+  useEffect(() => {
+    if (!observerRef.current || !channelId) return;
+
+    // Wait for a brief moment to ensure DOM is updated
+    setTimeout(() => {
+      const messageElements = document.querySelectorAll("[data-message-id]");
+      console.log(
+        `[MessageTracking] Observing ${messageElements.length} messages`,
+      );
+      messageElements.forEach((element) => {
+        if (element instanceof Element) {
+          observerRef.current?.observe(element);
+        }
+      });
+
+      // Check for initially visible messages
+      const observer = observerRef.current;
+      if (observer) {
+        messageElements.forEach((element) => {
+          if (element instanceof Element) {
+            const messageId = parseInt(
+              element.getAttribute("data-message-id") || "0",
+            );
+            const userId = parseInt(
+              element.getAttribute("data-user-id") || "0",
+            );
+
+            // Skip if already processed or from current user
+            if (
+              processedMessagesRef.current.has(messageId) ||
+              userId === currentUser?.id
+            ) {
+              return;
+            }
+
+            // Force an initial intersection check
+            observer.unobserve(element);
+            observer.observe(element);
+          }
+        });
+      }
+    }, 100);
+  }, [messagesData, channelId, currentUser?.id]);
+
+  // Save scroll position when leaving channel
+  useEffect(() => {
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+    if (!storageKey) {
+      return;
+    }
+
+    // Save position when unmounting
+    return () => {
+      if (scrollRef.current) {
+        const position = scrollRef.current.scrollTop;
+        localStorage.setItem(storageKey, position.toString());
+      }
+    };
+  }, [channelId, userId]);
+
+  // Restore scroll position when mounting
+  useEffect(() => {
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+    const savedPosition = localStorage.getItem(storageKey);
+
+    if (scrollRef.current && savedPosition) {
+      // Use setTimeout to ensure content is loaded
+      setTimeout(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = parseInt(savedPosition);
+        }
+      }, 100);
+    }
+  }, [channelId, userId]);
 
   // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({
