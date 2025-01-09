@@ -76,7 +76,7 @@ export default function MessageList({ channelId, userId }: Props) {
     }
   }, [readMessages]);
 
-  // Enhanced infinite query implementation
+  // Query for messages with infinite loading
   const {
     data: messagesData,
     fetchNextPage,
@@ -134,7 +134,7 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!(channelId || userId),
   });
 
-  // Enhanced scroll position maintenance
+  // Enhanced infinite scroll with better load triggers and position restoration
   useEffect(() => {
     const scrollContainer = document.getElementById("scroll-container");
     if (!scrollContainer) return;
@@ -152,22 +152,24 @@ export default function MessageList({ channelId, userId }: Props) {
         loadingMoreRef.current = true;
         console.log("[Scroll] Loading older messages...");
 
-        try {
-          // Save current scroll position and heights before fetching
-          const previousHeight = scrollHeight;
-          const previousScrollTop = scrollTop;
+        // Save current scroll position and heights
+        const previousHeight = scrollHeight;
+        const previousScrollTop = scrollTop;
 
+        try {
           await fetchNextPage();
 
           // Restore scroll position after new content is loaded
-          requestAnimationFrame(() => {
-            if (scrollContainer) {
-              const newHeight = scrollContainer.scrollHeight;
-              const heightDifference = newHeight - previousHeight;
-              scrollContainer.scrollTop = previousScrollTop + heightDifference;
-            }
-            loadingMoreRef.current = false;
-          });
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              if (scrollContainer) {
+                const newHeight = scrollContainer.scrollHeight;
+                const heightDifference = newHeight - previousHeight;
+                scrollContainer.scrollTop = previousScrollTop + heightDifference;
+              }
+              loadingMoreRef.current = false;
+            });
+          }, 0);
         } catch (error) {
           console.error("[Scroll] Error loading older messages:", error);
           loadingMoreRef.current = false;
@@ -175,7 +177,11 @@ export default function MessageList({ channelId, userId }: Props) {
       }
 
       // Load newer messages when near the bottom
-      if (distanceFromBottom < 200 && hasPreviousPage && !isFetchingPreviousPage) {
+      if (
+        distanceFromBottom < 200 &&
+        hasPreviousPage &&
+        !isFetchingPreviousPage
+      ) {
         loadingMoreRef.current = true;
         console.log("[Scroll] Loading newer messages...");
 
@@ -189,50 +195,62 @@ export default function MessageList({ channelId, userId }: Props) {
       }
     };
 
-    // Enhanced debounce with proper cleanup
-    const debouncedScroll = debounce(handleScroll, 100);
+    const debouncedScroll = debounce(handleScroll, 50);
     scrollContainer.addEventListener("scroll", debouncedScroll);
-
     return () => {
       scrollContainer.removeEventListener("scroll", debouncedScroll);
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
+      if (scrollRestorationTimeoutRef.current) {
+        clearTimeout(scrollRestorationTimeoutRef.current);
       }
     };
-  }, [fetchNextPage, fetchPreviousPage, hasNextPage, hasPreviousPage, isFetchingNextPage, isFetchingPreviousPage]);
+  }, [
+    fetchNextPage,
+    fetchPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+  ]);
 
   // Enhanced scroll position restoration
   useEffect(() => {
-    const storageKey = channelId
-      ? `chat-scroll-position-channel-${channelId}`
-      : userId
-      ? `chat-scroll-position-user-${userId}`
-      : "";
+    const storageKey = channelId ? `chat-scroll-position-channel-${channelId}` : userId ? `chat-scroll-position-user-${userId}` : "";
+    const savedPosition = localStorage.getItem(storageKey);
 
-    if (scrollRef.current && isInitialLoadRef.current) {
-      const savedPosition = localStorage.getItem(storageKey);
+    if (scrollRef.current && savedPosition && isInitialLoadRef.current) {
       isInitialLoadRef.current = false;
 
+      // Use a more robust approach to restore scroll position
       const restorePosition = () => {
         if (scrollRef.current) {
-          if (savedPosition) {
-            const targetPosition = parseInt(savedPosition);
-            scrollRef.current.scrollTop = targetPosition;
+          const targetPosition = parseInt(savedPosition);
+          scrollRef.current.scrollTop = targetPosition;
 
-            // Verify scroll position was set correctly
-            if (Math.abs(scrollRef.current.scrollTop - targetPosition) > 10) {
-              // If position wasn't set correctly, try again
-              scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 50);
-            }
+          // Verify scroll position was set correctly
+          if (Math.abs(scrollRef.current.scrollTop - targetPosition) > 10) {
+            // If position wasn't set correctly, try again
+            scrollRestorationTimeoutRef.current = setTimeout(
+              restorePosition,
+              50,
+            );
           } else {
-            // If no saved position, scroll to bottom
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            console.log(
+              `[Scroll] Successfully restored position ${targetPosition}`,
+            );
           }
         }
       };
 
       // Initial attempt to restore scroll position
       scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 100);
+    } else if (!savedPosition) {
+      // If no saved position, scroll to bottom on initial load
+      const scrollToBottom = () => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      };
+      scrollRestorationTimeoutRef.current = setTimeout(scrollToBottom, 100);
     }
 
     return () => {
@@ -440,7 +458,6 @@ export default function MessageList({ channelId, userId }: Props) {
       }
     }, 100);
   }, [messagesData, channelId, currentUser?.id]);
-
 
   // Save scroll position when leaving channel
   useEffect(() => {
