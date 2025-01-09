@@ -245,21 +245,21 @@ export function registerRoutes(app: Express): Server {
     "/api/channels/:channelId/messages",
     requireAuth,
     async (req, res) => {
+      const queryResult = messageQuerySchema.safeParse(req.query);
+      if (!queryResult.success) {
+        return res.status(400).json({
+          message: "Invalid query parameters",
+          errors: queryResult.error.issues,
+        });
+      }
+
+      const { before, after, limit } = queryResult.data;
+      const channelId = parseInt(req.params.channelId);
+      const messageLimit = Math.min(parseInt(limit), 50);
+
       try {
-        const queryResult = messageQuerySchema.safeParse(req.query);
-        if (!queryResult.success) {
-          return res.status(400).json({
-            message: "Invalid query parameters",
-            errors: queryResult.error.issues,
-          });
-        }
-
-        const { before, after, limit } = queryResult.data;
-        const channelId = parseInt(req.params.channelId);
-        const messageLimit = Math.min(parseInt(limit), 50);
-
-        // Base query to get messages with user info
-        let query = db
+        // Build base query
+        const baseQuery = db
           .select({
             id: messages.id,
             content: messages.content,
@@ -280,32 +280,25 @@ export function registerRoutes(app: Express): Server {
 
         // Add pagination conditions
         if (before) {
-          query = query.where(lt(messages.id, parseInt(before)));
-        } else if (after) {
-          query = query.where(gt(messages.id, parseInt(after)));
+          baseQuery.where(lt(messages.id, parseInt(before)));
+        }
+        if (after) {
+          baseQuery.where(gt(messages.id, parseInt(after)));
         }
 
-        // Get messages ordered by creation time
-        const channelMessages = await query
+        // Execute query with proper ordering
+        const channelMessages = await baseQuery
           .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
-        // If we fetched with 'before', we need to reverse the order to maintain
-        // chronological order (oldest first)
-        const orderedMessages = before
-          ? [...channelMessages].reverse()
-          : channelMessages;
+        // Ensure chronological order (oldest first)
+        const orderedMessages = before ? [...channelMessages].reverse() : channelMessages;
 
+        // Construct response with pagination cursors
         const response = {
           data: orderedMessages,
-          nextCursor:
-            channelMessages.length === messageLimit
-              ? orderedMessages[0].id.toString()
-              : null,
-          prevCursor:
-            channelMessages.length === messageLimit
-              ? orderedMessages[orderedMessages.length - 1].id.toString()
-              : null,
+          nextCursor: channelMessages.length === messageLimit ? orderedMessages[0].id.toString() : null,
+          prevCursor: channelMessages.length === messageLimit ? orderedMessages[orderedMessages.length - 1].id.toString() : null,
         };
 
         res.json(response);
@@ -313,7 +306,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to fetch messages: ${error}`);
         res.status(500).json({ message: "Failed to fetch messages" });
       }
-    },
+    }
   );
 
   app.post(
