@@ -935,6 +935,100 @@ export default function MessageList({
     return "";
   };
 
+  // New state for managing editing state for all messages
+  const [editingStates, setEditingStates] = useState<Record<number, boolean>>({});
+  const [editContents, setEditContents] = useState<Record<number, string>>({});
+
+  // Function to handle setting edit mode for a message
+  const setMessageEditMode = (messageId: number, isEditing: boolean) => {
+    setEditingStates((prev) => ({ ...prev, [messageId]: isEditing }));
+  };
+
+  // Function to handle setting edit content for a message
+  const setMessageEditContent = (messageId: number, content: string) => {
+    setEditContents((prev) => ({ ...prev, [messageId]: content }));
+  };
+
+  // Function to initialize edit content when entering edit mode
+  const initializeEditContent = (messageId: number, content: string) => {
+    if (!editContents[messageId]) {
+      setMessageEditContent(messageId, content);
+    }
+  };
+
+  // Edit message mutation
+  const editMessageMutation = useMutation({
+    mutationFn: async ({ messageId, content, isDirectMessage, toUserId, fromUserId }: {
+      messageId: number;
+      content: string;
+      isDirectMessage: boolean;
+      toUserId?: number;
+      fromUserId?: number;
+    }) => {
+      const url = isDirectMessage
+        ? `/api/dm/${messageId}`
+        : `/api/messages/${messageId}`;
+
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          content,
+          isDirectMessage,
+          toUserId,
+          fromUserId,
+        }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    },
+    onSuccess: (_, variables) => {
+      // Clear editing state
+      setMessageEditMode(variables.messageId, false);
+
+      // Invalidate queries based on message type
+      if (!variables.isDirectMessage && channelId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/channels",
+            channelId,
+            "messages",
+            threadId || undefined,
+          ],
+        });
+      } else if (variables.isDirectMessage && userId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/dm",
+            userId,
+            threadId || undefined,
+          ],
+        });
+      }
+
+      toast({
+        title: "Success",
+        description: "Message updated successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update message",
+        variant: "destructive",
+      });
+    },
+  });
+
+
   if (!channelId && !userId) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground">
@@ -954,8 +1048,7 @@ export default function MessageList({
               <Avatar className="h-8 w-8 mr-2">
                 <AvatarImage src={chatPartner.avatar || undefined} />
                 <AvatarFallback>
-                  {chatPartner.username[0].toUpperCase()}
-                </AvatarFallback>
+                  {chatPartner.username[0].toUpperCase()}                </AvatarFallback>
               </Avatar>
               <div
                 className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
@@ -987,8 +1080,6 @@ export default function MessageList({
         )}
         <div className="space-y-4">
           {allMessages.map((message: ExtendedMessage, i: number) => {
-            const [isEditing, setIsEditing] = useState(false);
-            const [editContent, setEditContent] = useState(message.content);
             const previousMessage = allMessages[i - 1];
             const showHeader =
               !previousMessage ||
@@ -1005,9 +1096,22 @@ export default function MessageList({
               !previousDate || !isSameDay(messageDate, previousDate);
 
             const handleSaveEdit = () => {
-              if (editContent.trim() === "") return;
-              editMessageMutation.mutate(editContent.trim());
+              const content = editContents[message.id];
+              if (!content || content.trim() === "") return;
+
+              editMessageMutation.mutate({
+                messageId: message.id,
+                content: content.trim(),
+                isDirectMessage: "toUserId" in message,
+                toUserId: "toUserId" in message ? message.toUserId : undefined,
+                fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
+              });
             };
+
+            // Initialize edit content when not yet set
+            if (editingStates[message.id] && !editContents[message.id]) {
+              initializeEditContent(message.id, message.content);
+            }
 
             return (
               <div key={message.id}>
@@ -1029,7 +1133,6 @@ export default function MessageList({
                         <span className="text-sm font-semibold">
                           {message.user.username}
                         </span>
-                        </span>
                         <span className="text-xs text-muted-foreground ml-2">
                           {format(messageDate, "h:mm a")}
                         </span>
@@ -1038,19 +1141,19 @@ export default function MessageList({
                   )}
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
-                      {isEditing ? (
+                      {editingStates[message.id] ? (
                         <div className="flex gap-2">
                           <Textarea
-                            value={editContent}
-                            onChange={(e) => setEditContent(e.target.value)}
+                            value={editContents[message.id] || ""}
+                            onChange={(e) => setMessageEditContent(message.id, e.target.value)}
                             className="min-h-[44px] flex-1"
                             onKeyDown={(e) => {
                               if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
                                 handleSaveEdit();
                               } else if (e.key === "Escape") {
-                                setIsEditing(false);
-                                setEditContent(message.content);
+                                setMessageEditMode(message.id, false);
+                                setMessageEditContent(message.id, message.content);
                               }
                             }}
                           />
@@ -1059,8 +1162,8 @@ export default function MessageList({
                               variant="secondary"
                               size="sm"
                               onClick={() => {
-                                setIsEditing(false);
-                                setEditContent(message.content);
+                                setMessageEditMode(message.id, false);
+                                setMessageEditContent(message.id, message.content);
                               }}
                             >
                               Cancel
@@ -1191,10 +1294,10 @@ export default function MessageList({
                     <MessageActions
                       message={message}
                       replyCallback={threadStateChanged}
-                      isEditing={isEditing}
-                      setIsEditing={setIsEditing}
-                      editContent={editContent}
-                      setEditContent={setEditContent}
+                      isEditing={editingStates[message.id] || false}
+                      setIsEditing={(value) => setMessageEditMode(message.id, value)}
+                      editContent={editContents[message.id] || message.content}
+                      setEditContent={(content) => setMessageEditContent(message.id, content)}
                       handleSaveEdit={handleSaveEdit}
                     />
                   </div>
