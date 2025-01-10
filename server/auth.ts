@@ -168,7 +168,7 @@ export function setupAuth(app: Express) {
         log(`[AUTH] Login successful: ${user.username}`);
         return res.json({
           message: "Login successful",
-          user: { id: user.id, username: user.username },
+          user: { id: user.id, username: user.username, avatar: user.avatar },
           token,
         });
       },
