@@ -43,6 +43,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
+import { File as FileIcon, Download } from "lucide-react";
+import type { Attachment } from "@db/schema";
 
 // Update type definition for message reactions and thread support
 interface MessageReaction {
@@ -62,6 +64,7 @@ type ExtendedMessage = (
   isRead?: boolean;
   reactions?: MessageReactions;
   replyCount?: number;
+  attachments?: Attachment[];
 };
 
 // Update props to include threadId
@@ -356,8 +359,8 @@ export default function MessageList({
       const storageKey = channelId
         ? `chat-scroll-position-channel-${channelId}`
         : userId
-          ? `chat-scroll-position-user-${userId}`
-          : "";
+        ? `chat-scroll-position-user-${userId}`
+        : "";
 
       if (storageKey) {
         const maxScroll =
@@ -454,8 +457,8 @@ export default function MessageList({
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
       : userId
-        ? `chat-scroll-position-user-${userId}`
-        : "";
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (savedPosition && isInitialLoadRef.current) {
@@ -614,8 +617,8 @@ export default function MessageList({
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
       : userId
-        ? `chat-scroll-position-user-${userId}`
-        : "";
+      ? `chat-scroll-position-user-${userId}`
+      : "";
 
     return () => {
       if (scrollableElementRef.current) {
@@ -677,8 +680,8 @@ export default function MessageList({
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
       : userId
-        ? `chat-scroll-position-user-${userId}`
-        : "";
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     if (!storageKey) {
       return;
     }
@@ -695,8 +698,8 @@ export default function MessageList({
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
       : userId
-        ? `chat-scroll-position-user-${userId}`
-        : "";
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (scrollableElementRef.current && savedPosition) {
@@ -860,6 +863,30 @@ export default function MessageList({
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
+                      {message.attachments && message.attachments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {message.attachments.map((attachment, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center gap-2 bg-accent/30 p-2 rounded-md text-sm w-fit"
+                            >
+                              <FileIcon className="h-4 w-4 text-muted-foreground" />
+                              <span className="max-w-[200px] truncate">
+                                {attachment.fileName}
+                              </span>
+                              <a
+                                href={attachment.url}
+                                download
+                                className="flex items-center gap-1 text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Download className="h-4 w-4" />
+                                Download
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {message.reactions &&
                         Object.keys(message.reactions).length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">

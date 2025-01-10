@@ -12,6 +12,17 @@ import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
 
+// Add type definition for file attachments
+export const attachmentSchema = z.object({
+  fileName: z.string(),
+  fileSize: z.number(),
+  fileType: z.string(),
+  url: z.string(),
+  uploadedAt: z.string(),
+});
+
+export type Attachment = z.infer<typeof attachmentSchema>;
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").unique().notNull(),
@@ -202,13 +213,26 @@ export const messageReadsRelations = relations(messageReads, ({ one }) => ({
 // Explicitly define the reaction schema for better type safety
 export const reactionSchema = z.record(z.string(), z.array(z.number()));
 
-// Update message schemas to include proper reaction typing
+// Update message schemas
 export const insertMessageSchema = createInsertSchema(messages).extend({
   reactions: reactionSchema.optional().default({}),
+  attachments: z.array(attachmentSchema).optional(),
 });
 
 export const selectMessageSchema = createSelectSchema(messages).extend({
   reactions: reactionSchema,
+  attachments: z.array(attachmentSchema).optional(),
+});
+
+// Same for direct messages
+export const insertDirectMessageSchema = createInsertSchema(directMessages).extend({
+  reactions: reactionSchema.optional().default({}),
+  attachments: z.array(attachmentSchema).optional(),
+});
+
+export const selectDirectMessageSchema = createSelectSchema(directMessages).extend({
+  reactions: reactionSchema,
+  attachments: z.array(attachmentSchema).optional(),
 });
 
 // Export types
