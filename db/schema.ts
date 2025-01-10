@@ -95,6 +95,7 @@ export const directMessages = pgTable("direct_messages", {
   reactions: jsonb("reactions"),
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const messageReads = pgTable(

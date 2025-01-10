@@ -77,6 +77,17 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
                 queryKey: ["/api/channels/all"],
               });
               break;
+            case "direct_message_read":
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.fromUserId],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.toUserId],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/users"],
+              });
+              break;
             case "direct_message":
               queryClient.invalidateQueries({
                 queryKey: ["/api/dm", data.payload.fromUserId],

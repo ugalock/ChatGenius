@@ -23,6 +23,7 @@ type WSMessageType =
   | "channel_created"
   | "unread_update"
   | "message_read"
+  | "direct_message_read"
   | "auth_check";
 
 interface WSMessage {

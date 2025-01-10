@@ -187,6 +187,36 @@ export function registerRoutes(app: Express): Server {
     },
   );
 
+  app.get(
+    "/api/users/:userId/read-direct-messages",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const userId = parseInt(req.params.userId);
+        const toUserId = req.user!.id;
+
+        // Get all read messages for this channel and user
+        const readDMs = await db
+          .select({
+            id: directMessages.id,
+          })
+          .from(directMessages)
+          .where(
+            and(
+              eq(directMessages.fromUserId, userId),
+              eq(directMessages.toUserId, toUserId),
+              eq(directMessages.isRead, true),
+            ),
+          );
+
+        res.json(readDMs);
+      } catch (error) {
+        log(`[ERROR] Failed to fetch read messages: ${error}`);
+        res.status(500).json({ message: "Failed to fetch read messages" });
+      }
+    },
+  );
+
   // Update last read message
   app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
     try {
@@ -384,10 +414,34 @@ export function registerRoutes(app: Express): Server {
   // Direct Messages
   app.get("/api/dm/:userId", requireAuth, async (req, res) => {
     try {
-      const messages = await db
+      const queryResult = messageQuerySchema.safeParse(req.query);
+      if (!queryResult.success) {
+        return res.status(400).json({
+          message: "Invalid query parameters",
+          errors: queryResult.error.issues,
+        });
+      }
+
+      const { before, after, limit } = queryResult.data;
+      const toUserId = parseInt(req.params.userId);
+      const messageLimit = Math.min(parseInt(limit), 50);
+      let query = db
         .select({
-          message: directMessages,
-          user: users,
+          id: directMessages.id,
+          content: directMessages.content,
+          fromUserId: directMessages.fromUserId,
+          toUserId: directMessages.toUserId,
+          attachments: directMessages.attachments,
+          reactions: directMessages.reactions,
+          isRead: directMessages.isRead,
+          createdAt: directMessages.createdAt,
+          updatedAt: directMessages.updatedAt,
+          user: {
+            id: users.id,
+            username: users.username,
+            avatar: users.avatar,
+            status: users.status,
+          },
         })
         .from(directMessages)
         .innerJoin(users, eq(directMessages.fromUserId, users.id))
@@ -395,28 +449,46 @@ export function registerRoutes(app: Express): Server {
           or(
             and(
               eq(directMessages.fromUserId, req.user!.id),
-              eq(directMessages.toUserId, parseInt(req.params.userId)),
+              eq(directMessages.toUserId, toUserId),
             ),
             and(
-              eq(directMessages.fromUserId, parseInt(req.params.userId)),
+              eq(directMessages.fromUserId, toUserId),
               eq(directMessages.toUserId, req.user!.id),
             ),
           ),
-        )
-        .orderBy(asc(directMessages.createdAt))
-        .limit(50);
+        );
 
-      res.json(
-        messages.map(({ message, user }) => ({
-          ...message,
-          user: {
-            id: user.id,
-            username: user.username,
-            avatar: user.avatar,
-            status: user.status,
-          },
-        })),
-      );
+      // Add pagination conditions
+      if (before) {
+        query = query.where(lt(directMessages.id, parseInt(before)));
+      } else if (after) {
+        query = query.where(gt(directMessages.id, parseInt(after)));
+      }
+
+      // Get messages ordered by creation time
+      const DMs = await query
+        .orderBy(
+          before
+            ? desc(directMessages.createdAt)
+            : asc(directMessages.createdAt),
+        )
+        .limit(messageLimit);
+
+      // If we fetched with 'before', we need to reverse the order to maintain
+      // chronological order (oldest first)
+      const orderedDMs = before ? [...DMs].reverse() : DMs;
+
+      const response = {
+        data: orderedDMs,
+        nextCursor:
+          DMs.length === messageLimit ? orderedDMs[0].id.toString() : null,
+        prevCursor:
+          DMs.length === messageLimit
+            ? orderedDMs[orderedDMs.length - 1].id.toString()
+            : null,
+      };
+
+      res.json(response);
     } catch (error) {
       log(`[ERROR] Failed to fetch direct messages: ${error}`);
       res.status(500).json({ message: "Failed to fetch direct messages" });
@@ -539,37 +611,63 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/messages/:messageId/read", requireAuth, async (req, res) => {
     try {
       const messageId = parseInt(req.params.messageId);
-      const userId = req.user!.id;
+      const channelId = req.body.channelId;
+      const userId = req.body.userId;
+      if (channelId) {
+        // Verify the message exists
+        const [message] = await db
+          .select()
+          .from(messages)
+          .where(eq(messages.id, messageId))
+          .limit(1);
 
-      // Verify the message exists
-      const [message] = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.id, messageId))
-        .limit(1);
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
 
-      if (!message) {
-        return res.status(404).json({ message: "Message not found" });
+        await db
+          .insert(messageReads)
+          .values({
+            messageId,
+            userId: req.user!.id,
+          })
+          .onConflictDoNothing();
+
+        // Broadcast read status update
+        ws.broadcast({
+          type: "message_read",
+          payload: {
+            messageId,
+            userId: req.user!.id,
+            channelId: message.channelId ?? undefined,
+          },
+        });
+      } else if (userId) {
+        const [message] = await db
+          .select()
+          .from(directMessages)
+          .where(eq(directMessages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        await db
+          .update(directMessages)
+          .set({ isRead: true })
+          .where(eq(directMessages.id, messageId));
+
+        ws.broadcast({
+          type: "direct_message_read",
+          payload: {
+            fromUserId: message.fromUserId,
+            toUserId: message.toUserId,
+          },
+        });
+      } else {
+        return res.status(400).json({ message: "Invalid request" });
       }
-
-      // Insert or ignore (if already exists) the message read record
-      await db
-        .insert(messageReads)
-        .values({
-          messageId,
-          userId,
-        })
-        .onConflictDoNothing();
-
-      // Broadcast read status update
-      ws.broadcast({
-        type: "message_read",
-        payload: {
-          messageId,
-          userId,
-          channelId: message.channelId ?? undefined,
-        },
-      });
 
       res.json({ message: "Message marked as read" });
     } catch (error) {
