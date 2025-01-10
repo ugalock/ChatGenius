@@ -116,6 +116,7 @@ export const messageReads = pgTable(
   }),
 );
 
+// Relations
 export const usersRelations = relations(users, ({ many }) => ({
   messages: many(messages),
   channelMemberships: many(channelMembers),
@@ -198,6 +199,7 @@ export const messageReadsRelations = relations(messageReads, ({ one }) => ({
   }),
 }));
 
+// Export schemas and types
 export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);
 export const insertChannelSchema = createInsertSchema(channels);
@@ -209,6 +211,7 @@ export const selectChannelUnreadSchema = createSelectSchema(channelUnreads);
 export const insertMessageReadSchema = createInsertSchema(messageReads);
 export const selectMessageReadSchema = createSelectSchema(messageReads);
 
+// Export types
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type SelectUser = typeof users.$inferSelect;

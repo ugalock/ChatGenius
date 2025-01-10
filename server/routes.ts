@@ -717,7 +717,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Add reactions to messages
+  // Update the reactions endpoint to properly handle reaction updates
   app.post("/api/messages/:messageId/react", requireAuth, async (req, res) => {
     try {
       const messageId = parseInt(req.params.messageId);
