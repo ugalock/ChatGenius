@@ -42,11 +42,14 @@ export default function MessageInput({ channelId, userId, threadId, dmChatName }
   const sendMessageMutation = useMutation({
     mutationFn: async (data: { content: string; files?: FileList }) => {
       const formData = new FormData();
-      formData.append("content", data.content);
+
+      // Important: Ensure content is always a non-empty string
+      const messageContent = data.content.trim() || "(attachment)";
+      formData.append("content", messageContent);
 
       if (data.files) {
-        Array.from(data.files).forEach((file, index) => {
-          formData.append(`files`, file);
+        Array.from(data.files).forEach((file) => {
+          formData.append("files", file);
         });
       }
 
@@ -138,12 +141,14 @@ export default function MessageInput({ channelId, userId, threadId, dmChatName }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() && (!fileInputRef.current?.files?.length)) {
+
+    // Allow sending if there's either content or files
+    if (!content.trim() && !fileInputRef.current?.files?.length) {
       return;
     }
 
     sendMessageMutation.mutate({
-      content,
+      content: content.trim(),
       files: fileInputRef.current?.files || undefined,
     });
   };

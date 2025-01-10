@@ -49,7 +49,7 @@ export const messages = pgTable("messages", {
     .notNull(),
   channelId: integer("channel_id").references(() => channels.id),
   threadId: integer("thread_id").references(() => messages.id),
-  attachments: jsonb("attachments"),
+  attachments: jsonb("attachments").$type<Attachment[]>(),
   reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -103,7 +103,7 @@ export const directMessages = pgTable("direct_messages", {
     .references(() => users.id)
     .notNull(),
   threadId: integer("thread_id").references(() => directMessages.id),
-  attachments: jsonb("attachments"),
+  attachments: jsonb("attachments").$type<Attachment[]>(),
   reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),

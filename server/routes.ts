@@ -5,6 +5,10 @@ import { createServer, type Server } from "http";
 import { setupWebSocket } from "./ws";
 import { requireAuth } from "./auth";
 import { db } from "@db";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import express from "express";
 import {
   channels,
   messages,
@@ -13,8 +17,41 @@ import {
   users,
   channelUnreads,
   messageReads,
+  type Attachment,
 } from "@db/schema";
 import { log } from "./vite";
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow images and PDFs
+    if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  },
+});
 
 // Channel creation validation schema
 const createChannelSchema = z.object({
@@ -69,6 +106,7 @@ async function createMessage(data: {
   userId: number;
   channelId: number;
   threadId?: number | null;
+  attachments?: Attachment[] | null;
 }) {
   const result = await db.transaction(async (tx) => {
     const [message] = await tx
@@ -78,6 +116,7 @@ async function createMessage(data: {
         userId: data.userId,
         channelId: data.channelId,
         threadId: data.threadId,
+        attachments: data.attachments,
       })
       .returning();
 
@@ -108,6 +147,9 @@ async function createMessage(data: {
 export function registerRoutes(app: Express): Server {
   const httpServer = createServer(app);
   const ws = setupWebSocket(httpServer);
+
+  // Serve uploaded files
+  app.use("/uploads", express.static(uploadsDir));
 
   // Protected API routes - must be authenticated
   app.use("/api/channels", requireAuth);
@@ -361,7 +403,6 @@ export function registerRoutes(app: Express): Server {
 
         const { before, after, limit, threadId } = queryResult.data;
         const channelId = parseInt(req.params.channelId);
-        console.log(channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
         let whereClause;
@@ -481,36 +522,77 @@ export function registerRoutes(app: Express): Server {
     }
   );
 
+  // Update message creation endpoint to handle file uploads
   app.post(
     "/api/channels/:channelId/messages",
     requireAuth,
+    upload.array("files"),
     async (req, res) => {
       try {
-        const { content, threadId } = req.body;
+        // Important: Ensure content is always a non-empty string
+        const content = req.body.content || "(attachment)"; // Provide default content for file-only messages
+        const threadId = req.body.threadId ? parseInt(req.body.threadId) : null;
         const channelId = parseInt(req.params.channelId);
+        const files = req.files as Express.Multer.File[];
 
-        const result = await createMessage({
-          content,
-          userId: req.user!.id,
-          channelId,
-          threadId,
-        });
+        let attachments: Attachment[] = [];
+        if (files && files.length > 0) {
+          attachments = files.map(file => ({
+            fileName: file.originalname,
+            fileSize: file.size,
+            fileType: file.mimetype,
+            url: `/uploads/${file.filename}`,
+            uploadedAt: new Date().toISOString()
+          }));
+        }
 
-        // Send message through WebSocket
-        const messagePayload: MessagePayload = {
-          ...result,
-          channelId,
-          content: result.content,
-          user: result.user,
+        // Insert the message
+        const [result] = await db
+          .insert(messages)
+          .values({
+            content: content.trim(), // Ensure content is trimmed
+            userId: req.user!.id,
+            channelId,
+            threadId,
+            attachments: attachments.length > 0 ? attachments : null,
+          })
+          .returning();
+
+        // Get the full message with user details
+        const [messageWithUser] = await db
+          .select({
+            message: messages,
+            user: users,
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.userId, users.id))
+          .where(eq(messages.id, result.id))
+          .limit(1);
+
+        const fullMessage = {
+          ...messageWithUser.message,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status,
+          },
         };
 
+        // Send message through WebSocket
         ws.broadcast({
           type: "message",
-          payload: messagePayload,
+          payload: {
+            ...fullMessage,
+            channelId,
+            content: fullMessage.content,
+            user: fullMessage.user,
+          },
         });
 
-        res.json(result);
+        res.json(fullMessage);
       } catch (error) {
+        console.error("Error posting message:", error);
         log(`[ERROR] Failed to post message: ${error}`);
         res.status(500).json({ message: "Failed to post message" });
       }
@@ -534,15 +616,15 @@ export function registerRoutes(app: Express): Server {
       const messageLimit = Math.min(parseInt(limit), 50);
 
       let whereClause = or(
-          and(
-            eq(directMessages.fromUserId, req.user!.id),
-            eq(directMessages.toUserId, toUserId),
-          ),
-          and(
-            eq(directMessages.fromUserId, toUserId),
-            eq(directMessages.toUserId, req.user!.id),
-          ),
-        );
+        and(
+          eq(directMessages.fromUserId, req.user!.id),
+          eq(directMessages.toUserId, toUserId),
+        ),
+        and(
+          eq(directMessages.fromUserId, toUserId),
+          eq(directMessages.toUserId, req.user!.id),
+        ),
+      );
       if (threadId) {
         if (before) {
           whereClause = and(
@@ -655,52 +737,75 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.post("/api/dm/:userId", requireAuth, async (req, res) => {
-    try {
-      const { content, threadId } = req.body;
-      const [message] = await db
-        .insert(directMessages)
-        .values({
-          content,
-          fromUserId: req.user!.id,
-          toUserId: parseInt(req.params.userId),
-          threadId: threadId,
-        })
-        .returning();
+  // Update direct message creation endpoint to handle file uploads
+  app.post(
+    "/api/dm/:userId",
+    requireAuth,
+    upload.array("files"),
+    async (req, res) => {
+      try {
+        const content = req.body.content || "(attachment)"; // Provide default content for file-only messages
+        const threadId = req.body.threadId ? parseInt(req.body.threadId) : null;
+        const files = req.files as Express.Multer.File[];
 
-      const [messageWithUser] = await db
-        .select({
-          message: directMessages,
-          user: users,
-        })
-        .from(directMessages)
-        .innerJoin(users, eq(directMessages.fromUserId, users.id))
-        .where(eq(directMessages.id, message.id))
-        .limit(1);
+        let attachments: Attachment[] = [];
+        if (files && files.length > 0) {
+          attachments = files.map(file => ({
+            fileName: file.originalname,
+            fileSize: file.size,
+            fileType: file.mimetype,
+            url: `/uploads/${file.filename}`,
+            uploadedAt: new Date().toISOString()
+          }));
+        }
 
-      const fullMessage: MessagePayload = {
-        ...messageWithUser.message,
-        user: {
-          id: messageWithUser.user.id,
-          username: messageWithUser.user.username,
-          avatar: messageWithUser.user.avatar,
-          status: messageWithUser.user.status,
-        },
-        content: messageWithUser.message.content,
-      };
+        // Insert the direct message
+        const [message] = await db
+          .insert(directMessages)
+          .values({
+            content,
+            fromUserId: req.user!.id,
+            toUserId: parseInt(req.params.userId),
+            threadId,
+            attachments: attachments.length > 0 ? attachments : null,
+          })
+          .returning();
 
-      // Send direct message through WebSocket
-      ws.broadcast({
-        type: "direct_message",
-        payload: fullMessage,
-      });
+        // Get the full message with user details
+        const [messageWithUser] = await db
+          .select({
+            message: directMessages,
+            user: users,
+          })
+          .from(directMessages)
+          .innerJoin(users, eq(directMessages.fromUserId, users.id))
+          .where(eq(directMessages.id, message.id))
+          .limit(1);
 
-      res.json(fullMessage);
-    } catch (error) {
-      log(`[ERROR] Failed to post direct message: ${error}`);
-      res.status(500).json({ message: "Failed to post direct message" });
+        const fullMessage = {
+          ...messageWithUser.message,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status,
+          },
+        };
+
+        // Send direct message through WebSocket
+        ws.broadcast({
+          type: "direct_message",
+          payload: fullMessage,
+        });
+
+        res.json(fullMessage);
+      } catch (error) {
+        console.error("Error posting direct message:", error);
+        log(`[ERROR] Failed to post direct message: ${error}`);
+        res.status(500).json({ message: "Failed to post direct message" });
+      }
     }
-  });
+  );
 
   // Users
   app.get("/api/users", requireAuth, async (req, res) => {
