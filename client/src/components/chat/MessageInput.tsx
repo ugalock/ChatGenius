@@ -10,10 +10,11 @@ import { useUser } from "@/hooks/use-user";
 type Props = {
   channelId: number | null;
   userId: number | null;
+  threadId?: number | null;
   dmChatName: string | undefined;
 };
 
-export default function MessageInput({ channelId, userId, dmChatName }: Props) {
+export default function MessageInput({ channelId, userId, threadId, dmChatName }: Props) {
   const [content, setContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -35,7 +36,7 @@ export default function MessageInput({ channelId, userId, dmChatName }: Props) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, threadId }),
         credentials: "include",
       });
 
@@ -48,10 +49,10 @@ export default function MessageInput({ channelId, userId, dmChatName }: Props) {
     onSuccess: () => {
       // Invalidate the appropriate query based on whether it's a DM or channel message
       if (userId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/dm", userId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/dm", userId, threadId] });
       } else {
         queryClient.invalidateQueries({
-          queryKey: ["/api/channels", channelId, "messages"],
+          queryKey: ["/api/channels", channelId, "messages", threadId],
         });
       }
       setContent("");
@@ -106,6 +107,8 @@ export default function MessageInput({ channelId, userId, dmChatName }: Props) {
 
   const placeholder = userId
     ? `Message ${dmChatName}`
+    : threadId
+    ? "Reply in thread"
     : `Message ${channelId ? "#channel" : ""}`;
 
   return (

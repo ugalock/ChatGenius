@@ -1,11 +1,11 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useQuery, useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { format, formatDistance, isToday, isYesterday, isSameDay } from "date-fns";
-import { Search, Users, File } from "lucide-react";
+import { Search, Users, File, ArrowLeft, MessageSquare } from "lucide-react";
 import type {
   Message,
   User,
@@ -26,21 +26,19 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Smile, MoreHorizontal } from "lucide-react";
+import { MessageSquare as MessageSquareIcon, Smile, MoreHorizontal } from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
-import { queryClient } from "@/lib/queryClient";
 
-// Update type definition for message reactions
+// Update type definition for message reactions and thread support
 interface MessageReaction {
   emoji: string;
   userIds: number[];
 }
 
 interface MessageReactions {
-  [key: string]: number[]; // emoji -> array of user IDs who reacted
+  [key: string]: number[];
 }
 
-// Extend the base message types to include the user and thread support
 type ExtendedMessage = (
   | (Message & { threadId: number | null })
   | (DirectMessage & { threadId: number | null })
@@ -48,12 +46,53 @@ type ExtendedMessage = (
   user: User;
   isRead?: boolean;
   reactions?: MessageReactions;
+  replyCount?: number;
 };
 
-// Update the MessageActions component to handle reactions properly
+// Update props to include threadId
+type Props = {
+  channelId: number | null;
+  userId: number | null;
+  threadId?: number | null;
+  onBackToChannel?: () => void;
+};
+
+interface PageParam {
+  before: string | null;
+  after: string | null;
+}
+
+interface MessagesResponse {
+  data: ExtendedMessage[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+}
+
+const MESSAGES_PER_PAGE = 50;
+
+const DateHeader = ({ date }: { date: Date }) => {
+  let displayDate = "";
+  if (isToday(date)) {
+    displayDate = "Today";
+  } else if (isYesterday(date)) {
+    displayDate = "Yesterday";
+  } else {
+    displayDate = format(date, "MMMM d, yyyy");
+  }
+
+  return (
+    <div className="sticky top-2 z-10 flex justify-center my-6">
+      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
+        {displayDate}
+      </div>
+    </div>
+  );
+};
+
 const MessageActions = ({ message }: { message: ExtendedMessage }) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const { user: currentUser, token } = useUser();
+  const queryClient = useQueryClient();
 
   const addReactionMutation = useMutation({
     mutationFn: async (emoji: string) => {
@@ -72,7 +111,7 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
 
       return response.json();
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       // Invalidate the appropriate query based on message type
       if ('channelId' in message && message.channelId) {
         queryClient.invalidateQueries({ queryKey: ["/api/channels", message.channelId, "messages"] });
@@ -104,7 +143,7 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
         </PopoverContent>
       </Popover>
       <Button variant="ghost" size="icon" className="h-8 w-8">
-        <MessageSquare className="h-4 w-4" />
+        <MessageSquareIcon className="h-4 w-4" />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -121,45 +160,7 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
   );
 };
 
-type Props = {
-  channelId: number | null;
-  userId: number | null;
-};
-
-interface PageParam {
-  before: string | null;
-  after: string | null;
-}
-
-interface MessagesResponse {
-  data: ExtendedMessage[];
-  nextCursor: string | null;
-  prevCursor: string | null;
-}
-
-const MESSAGES_PER_PAGE = 1000;
-
-const DateHeader = ({ date }: { date: Date }) => {
-  let displayDate = "";
-  if (isToday(date)) {
-    displayDate = "Today";
-  } else if (isYesterday(date)) {
-    displayDate = "Yesterday";
-  } else {
-    displayDate = format(date, "MMMM d, yyyy");
-  }
-
-  return (
-    <div className="sticky top-2 z-10 flex justify-center my-6">
-      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
-        {displayDate}
-      </div>
-    </div>
-  );
-};
-
-
-export default function MessageList({ channelId, userId }: Props) {
+export default function MessageList({ channelId, userId, threadId, onBackToChannel }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollableElementRef = useRef<HTMLDivElement | null>(null);
   const { user: currentUser, token } = useUser();
@@ -223,8 +224,8 @@ export default function MessageList({ channelId, userId }: Props) {
     isFetchingPreviousPage,
   } = useInfiniteQuery<MessagesResponse>({
     queryKey: userId
-      ? ["/api/dm", userId]
-      : ["/api/channels", channelId, "messages"],
+      ? ["/api/dm", userId, threadId]
+      : ["/api/channels", channelId, "messages", threadId],
     queryFn: async ({ pageParam = { before: null, after: null } }) => {
       const url = userId
         ? `/api/dm/${userId}`
@@ -238,6 +239,9 @@ export default function MessageList({ channelId, userId }: Props) {
       }
       if (typedPageParam.after) {
         queryParams.append("after", typedPageParam.after);
+      }
+      if (threadId) {
+        queryParams.append("threadId", threadId.toString());
       }
       queryParams.append("limit", MESSAGES_PER_PAGE.toString());
 
@@ -673,6 +677,21 @@ export default function MessageList({ channelId, userId }: Props) {
   });
 
   const getMessageTitle = () => {
+    if (threadId) {
+      return (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onBackToChannel}
+            className="h-8 w-8"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <span>Thread</span>
+        </div>
+      );
+    }
     if (userId && chatPartner) {
       return chatPartner.username;
     }
@@ -692,11 +711,12 @@ export default function MessageList({ channelId, userId }: Props) {
 
   const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
+
   return (
     <div className="h-full flex flex-col">
       <div className="bg-white border-b p-4 flex items-center justify-between">
         <div className="flex items-center">
-          {userId && chatPartner && (
+          {userId && chatPartner && !threadId && (
             <div className="relative">
               <Avatar className="h-8 w-8 mr-2">
                 <AvatarImage src={chatPartner.avatar || undefined} />
@@ -709,21 +729,21 @@ export default function MessageList({ channelId, userId }: Props) {
                   chatPartner.status === "online"
                     ? "bg-green-500"
                     : "bg-gray-500"
-                  }`}
+                }`}
               />
             </div>
           )}
-          <div>
-            <h2 className="text-xl font-semibold">{getMessageTitle()}</h2>
+          <div>{getMessageTitle()}</div>
+        </div>
+        {!threadId && (
+          <div className="flex items-center space-x-4">
+            <Search className="w-5 h-5 text-gray-500 cursor-pointer" />
+            {!userId && (
+              <Users className="w-5 h-5 text-gray-500 cursor-pointer" />
+            )}
+            <File className="w-5 h-5 text-gray-500 cursor-pointer" />
           </div>
-        </div>
-        <div className="flex items-center space-x-4">
-          <Search className="w-5 h-5 text-gray-500 cursor-pointer" />
-          {!userId && (
-            <Users className="w-5 h-5 text-gray-500 cursor-pointer" />
-          )}
-          <File className="w-5 h-5 text-gray-500 cursor-pointer" />
-        </div>
+        )}
       </div>
 
       <ScrollArea id="scroll-container" ref={scrollRef} className="flex-1 p-4">
@@ -784,7 +804,6 @@ export default function MessageList({ channelId, userId }: Props) {
                             return (
                               <button
                                 key={emoji}
-                                onClick={() => addReactionMutation.mutate(emoji)}
                                 className={`inline-flex items-center gap-1 text-xs ${
                                   hasReacted ? 'bg-accent' : 'bg-background'
                                 } hover:bg-accent px-2 py-0.5 rounded-full`}
@@ -798,15 +817,29 @@ export default function MessageList({ channelId, userId }: Props) {
                     </div>
                     <MessageActions message={message} />
                   </div>
-                  {message.threadId && (
+                  {!threadId && (message.replyCount || 0) > 0 && (
                     <div className="pl-12 mt-1">
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          // Use React Router or your navigation solution
+                          const baseUrl = userId 
+                            ? `/dm/${userId}` 
+                            : `/channels/${channelId}`;
+                          window.history.pushState(
+                            {},
+                            "",
+                            `${baseUrl}/thread/${message.id}`
+                          );
+                          if (onBackToChannel) {
+                            onBackToChannel();
+                          }
+                        }}
                       >
                         <MessageSquare className="h-3 w-3 mr-1" />
-                        View thread
+                        {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
                       </Button>
                     </div>
                   )}
@@ -826,6 +859,7 @@ export default function MessageList({ channelId, userId }: Props) {
         <MessageInput
           channelId={channelId}
           userId={userId}
+          threadId={threadId}
           dmChatName={chatPartner?.username}
         />
       </div>

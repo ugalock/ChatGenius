@@ -23,11 +23,12 @@ const createChannelSchema = z.object({
   isPrivate: z.boolean().default(false),
 });
 
-// Message query param validation schema
+// Update message query param validation schema to include threadId
 const messageQuerySchema = z.object({
   before: z.string().optional(),
   after: z.string().optional(),
   limit: z.string().default("50"),
+  threadId: z.string().optional(),
 });
 
 // Reaction schema
@@ -57,9 +58,49 @@ interface ReactionPayload extends BaseWSPayload {
 }
 
 interface WSMessage {
-  type: "message" | "direct_message" | "channel_created" | "unread_update" | 
+  type: "message" | "direct_message" | "channel_created" | "unread_update" |
         "message_read" | "direct_message_read" | "message_reaction";
   payload: MessagePayload | ReactionPayload | BaseWSPayload;
+}
+
+// Fix the message creation transaction
+async function createMessage(data: {
+  content: string;
+  userId: number;
+  channelId: number;
+  threadId?: number | null;
+}) {
+  return await db.transaction(async (tx) => {
+    const [message] = await tx
+      .insert(messages)
+      .values({
+        content: data.content,
+        userId: data.userId,
+        channelId: data.channelId,
+        threadId: data.threadId,
+      })
+      .returning();
+
+    const [messageWithUser] = await tx
+      .select({
+        message: messages,
+        user: users,
+      })
+      .from(messages)
+      .innerJoin(users, eq(messages.userId, users.id))
+      .where(eq(messages.id, message.id))
+      .limit(1);
+
+    return {
+      ...messageWithUser.message,
+      user: {
+        id: messageWithUser.user.id,
+        username: messageWithUser.user.username,
+        avatar: messageWithUser.user.avatar,
+        status: messageWithUser.user.status,
+      },
+    };
+  });
 }
 
 export function registerRoutes(app: Express): Server {
@@ -90,7 +131,7 @@ export function registerRoutes(app: Express): Server {
           unreadCount: sql<number>`
             COALESCE(
               (
-                SELECT COUNT(messages.id)::integer 
+                SELECT COUNT(messages.id)::integer
                 FROM ${messages}
                 WHERE channel_id = channels.id AND messages.user_id != ${req.user!.id}
                 AND NOT EXISTS (
@@ -302,7 +343,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Messages with pagination
+  // Messages with pagination and thread support
   app.get(
     "/api/channels/:channelId/messages",
     requireAuth,
@@ -316,17 +357,17 @@ export function registerRoutes(app: Express): Server {
           });
         }
 
-        const { before, after, limit } = queryResult.data;
+        const { before, after, limit, threadId } = queryResult.data;
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Base query to get messages with user info and reactions
-        let query = db
+        let baseQuery = db
           .select({
             id: messages.id,
             content: messages.content,
             channelId: messages.channelId,
             userId: messages.userId,
+            threadId: messages.threadId,
             reactions: messages.reactions,
             createdAt: messages.createdAt,
             updatedAt: messages.updatedAt,
@@ -336,20 +377,39 @@ export function registerRoutes(app: Express): Server {
               avatar: users.avatar,
               status: users.status,
             },
+            replyCount: sql<number>`
+              CAST((
+                SELECT COUNT(*)
+                FROM ${messages} replies
+                WHERE replies.thread_id = ${messages.id}
+              ) AS integer)
+            `,
           })
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
           .where(eq(messages.channelId, channelId));
 
+        // Add thread filtering if threadId is provided
+        if (threadId) {
+          baseQuery = baseQuery.where(
+            or(
+              eq(messages.id, parseInt(threadId)),
+              eq(messages.threadId, parseInt(threadId))
+            )
+          );
+        } else {
+          baseQuery = baseQuery.where(sql`${messages.threadId} IS NULL`);
+        }
+
         // Add pagination conditions
         if (before) {
-          query = query.where(lt(messages.id, parseInt(before)));
+          baseQuery = baseQuery.where(lt(messages.id, parseInt(before)));
         } else if (after) {
-          query = query.where(gt(messages.id, parseInt(after)));
+          baseQuery = baseQuery.where(gt(messages.id, parseInt(after)));
         }
 
         // Get messages ordered by creation time
-        const channelMessages = await query
+        const channelMessages = await baseQuery
           .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
@@ -389,38 +449,14 @@ export function registerRoutes(app: Express): Server {
     requireAuth,
     async (req, res) => {
       try {
-        const { content } = req.body;
+        const { content, threadId } = req.body;
         const channelId = parseInt(req.params.channelId);
 
-        const result = await db.transaction(async (tx) => {
-          const [message] = await tx
-            .insert(messages)
-            .values({
-              content,
-              userId: req.user!.id,
-              channelId,
-            })
-            .returning();
-
-          const [messageWithUser] = await tx
-            .select({
-              message: messages,
-              user: users,
-            })
-            .from(messages)
-            .innerJoin(users, eq(messages.userId, users.id))
-            .where(eq(messages.id, message.id))
-            .limit(1);
-
-          return {
-            ...messageWithUser.message,
-            user: {
-              id: messageWithUser.user.id,
-              username: messageWithUser.user.username,
-              avatar: messageWithUser.user.avatar,
-              status: messageWithUser.user.status,
-            },
-          };
+        const result = await createMessage({
+          content,
+          userId: req.user!.id,
+          channelId,
+          threadId,
         });
 
         // Send message through WebSocket
@@ -428,26 +464,12 @@ export function registerRoutes(app: Express): Server {
           ...result,
           channelId,
           content: result.content,
-          user: {
-            id: result.userId,
-            username: result.user.username,
-            avatar: result.user.avatar,
-            status: result.user.status,
-          },
+          user: result.user,
         };
 
         ws.broadcast({
           type: "message",
           payload: messagePayload,
-        });
-
-        // Broadcast unread update
-        ws.broadcast({
-          type: "unread_update",
-          payload: {
-            channelId,
-            messageId: result.id,
-          },
         });
 
         res.json(result);
@@ -459,6 +481,7 @@ export function registerRoutes(app: Express): Server {
   );
 
   // Direct Messages
+  // Update the direct messages endpoint to support threading
   app.get("/api/dm/:userId", requireAuth, async (req, res) => {
     try {
       const queryResult = messageQuerySchema.safeParse(req.query);
@@ -469,15 +492,17 @@ export function registerRoutes(app: Express): Server {
         });
       }
 
-      const { before, after, limit } = queryResult.data;
+      const { before, after, limit, threadId } = queryResult.data;
       const toUserId = parseInt(req.params.userId);
       const messageLimit = Math.min(parseInt(limit), 50);
-      let query = db
+
+      let baseQuery = db
         .select({
           id: directMessages.id,
           content: directMessages.content,
           fromUserId: directMessages.fromUserId,
           toUserId: directMessages.toUserId,
+          threadId: directMessages.threadId,
           attachments: directMessages.attachments,
           reactions: directMessages.reactions,
           isRead: directMessages.isRead,
@@ -489,6 +514,13 @@ export function registerRoutes(app: Express): Server {
             avatar: users.avatar,
             status: users.status,
           },
+          replyCount: sql<number>`
+            CAST((
+              SELECT COUNT(*)
+              FROM ${directMessages} replies
+              WHERE replies.thread_id = ${directMessages.id}
+            ) AS integer)
+          `,
         })
         .from(directMessages)
         .innerJoin(users, eq(directMessages.fromUserId, users.id))
@@ -505,18 +537,28 @@ export function registerRoutes(app: Express): Server {
           ),
         );
 
+      // Add thread filtering if threadId is provided
+      if (threadId) {
+        baseQuery = baseQuery.where(
+          or(
+            eq(directMessages.id, parseInt(threadId)),
+            eq(directMessages.threadId, parseInt(threadId))
+          )
+        );
+      } else {
+        baseQuery = baseQuery.where(sql`${directMessages.threadId} IS NULL`);
+      }
+
       // Add pagination conditions
       if (before) {
-        query = query.where(lt(directMessages.id, parseInt(before)));
+        baseQuery = baseQuery.where(lt(directMessages.id, parseInt(before)));
       } else if (after) {
-        query = query.where(gt(directMessages.id, parseInt(after)));
+        baseQuery = baseQuery.where(gt(directMessages.id, parseInt(after)));
       }
 
       // Get messages ordered by creation time
-      const DMs = await query
-        .orderBy(
-          before ? desc(directMessages.createdAt) : asc(directMessages.createdAt),
-        )
+      const DMs = await baseQuery
+        .orderBy(before ? desc(directMessages.createdAt) : asc(directMessages.createdAt))
         .limit(messageLimit);
 
       // Ensure reactions are properly formatted
