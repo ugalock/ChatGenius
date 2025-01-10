@@ -57,7 +57,8 @@ interface ReactionPayload extends BaseWSPayload {
 }
 
 interface WSMessage {
-  type: "message" | "direct_message" | "channel_created" | "unread_update" | "message_read" | "direct_message_read" | "message_reaction";
+  type: "message" | "direct_message" | "channel_created" | "unread_update" | 
+        "message_read" | "direct_message_read" | "message_reaction";
   payload: MessagePayload | ReactionPayload | BaseWSPayload;
 }
 
@@ -319,13 +320,14 @@ export function registerRoutes(app: Express): Server {
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Base query to get messages with user info
+        // Base query to get messages with user info and reactions
         let query = db
           .select({
             id: messages.id,
             content: messages.content,
             channelId: messages.channelId,
             userId: messages.userId,
+            reactions: messages.reactions,
             createdAt: messages.createdAt,
             updatedAt: messages.updatedAt,
             user: {
@@ -351,11 +353,16 @@ export function registerRoutes(app: Express): Server {
           .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
-        // If we fetched with 'before', we need to reverse the order to maintain
-        // chronological order (oldest first)
+        // Ensure reactions are properly formatted
+        const formattedMessages = channelMessages.map(msg => ({
+          ...msg,
+          reactions: msg.reactions || {},
+        }));
+
+        // If we fetched with 'before', we need to reverse the order
         const orderedMessages = before
-          ? [...channelMessages].reverse()
-          : channelMessages;
+          ? [...formattedMessages].reverse()
+          : formattedMessages;
 
         const response = {
           data: orderedMessages,
@@ -508,15 +515,18 @@ export function registerRoutes(app: Express): Server {
       // Get messages ordered by creation time
       const DMs = await query
         .orderBy(
-          before
-            ? desc(directMessages.createdAt)
-            : asc(directMessages.createdAt),
+          before ? desc(directMessages.createdAt) : asc(directMessages.createdAt),
         )
         .limit(messageLimit);
 
-      // If we fetched with 'before', we need to reverse the order to maintain
-      // chronological order (oldest first)
-      const orderedDMs = before ? [...DMs].reverse() : DMs;
+      // Ensure reactions are properly formatted
+      const formattedDMs = DMs.map(dm => ({
+        ...dm,
+        reactions: dm.reactions || {},
+      }));
+
+      // If we fetched with 'before', we need to reverse the order
+      const orderedDMs = before ? [...formattedDMs].reverse() : formattedDMs;
 
       const response = {
         data: orderedDMs,
@@ -717,7 +727,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Update the reactions endpoint to properly handle reaction updates
+  // Update the reaction endpoint to handle both message types
   app.post("/api/messages/:messageId/react", requireAuth, async (req, res) => {
     try {
       const messageId = parseInt(req.params.messageId);
@@ -733,15 +743,28 @@ export function registerRoutes(app: Express): Server {
       const { emoji } = result.data;
       const userId = req.user!.id;
 
-      // First check if the message exists and get its current reactions
-      const [message] = await db
+      // Try to find the message in channel messages first
+      let [message] = await db
         .select()
         .from(messages)
         .where(eq(messages.id, messageId))
         .limit(1);
 
+      let isDirectMessage = false;
+
+      // If not found in channel messages, check direct messages
       if (!message) {
-        return res.status(404).json({ message: "Message not found" });
+        [message] = await db
+          .select()
+          .from(directMessages)
+          .where(eq(directMessages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        isDirectMessage = true;
       }
 
       // Initialize or update reactions
@@ -763,21 +786,32 @@ export function registerRoutes(app: Express): Server {
         delete updatedReactions[emoji];
       }
 
-      // Update the message with new reactions
-      const [updatedMessage] = await db
-        .update(messages)
-        .set({
-          reactions: updatedReactions,
-        })
-        .where(eq(messages.id, messageId))
-        .returning();
+      // Update the message with new reactions based on message type
+      let updatedMessage;
+      if (isDirectMessage) {
+        [updatedMessage] = await db
+          .update(directMessages)
+          .set({
+            reactions: updatedReactions,
+          })
+          .where(eq(directMessages.id, messageId))
+          .returning();
+      } else {
+        [updatedMessage] = await db
+          .update(messages)
+          .set({
+            reactions: updatedReactions,
+          })
+          .where(eq(messages.id, messageId))
+          .returning();
+      }
 
       // Broadcast reaction update
-      const reactionPayload: ReactionPayload = {
+      const reactionPayload = {
         messageId,
         reactions: updatedReactions,
         userId,
-        channelId: message.channelId ?? undefined,
+        channelId: isDirectMessage ? undefined : (message as any).channelId,
       };
 
       ws.broadcast({

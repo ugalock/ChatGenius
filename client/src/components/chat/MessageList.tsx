@@ -30,7 +30,7 @@ import { MessageSquare, Smile, MoreHorizontal } from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 import { queryClient } from "@/lib/queryClient";
 
-// Define the structure for message reactions
+// Update type definition for message reactions
 interface MessageReaction {
   emoji: string;
   userIds: number[];
@@ -73,8 +73,12 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
       return response.json();
     },
     onSuccess: (data) => {
-      // Invalidate the messages query to refresh the reactions
-      queryClient.invalidateQueries({ queryKey: ["messages", message.channelId] });
+      // Invalidate the appropriate query based on message type
+      if ('channelId' in message && message.channelId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/channels", message.channelId, "messages"] });
+      } else if ('toUserId' in message && message.toUserId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/dm", message.toUserId] });
+      }
     },
   });
 
@@ -167,7 +171,6 @@ export default function MessageList({ channelId, userId }: Props) {
   const isInitialLoadRef = useRef(true);
   const loadingMoreRef = useRef(false);
 
-  // Query for read messages to initialize the processed set
   const { data: readMessages } = useQuery<MessageRead[]>({
     queryKey: ["/api/channels", channelId, "read-messages"],
     queryFn: async () => {
@@ -183,7 +186,6 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!channelId,
   });
 
-  // Query for read direct messages to initialize the processed set
   const { data: readDMs } = useQuery<DirectMessage[]>({
     queryKey: ["/api/users", userId, "read-direct-messages"],
     queryFn: async () => {
@@ -199,7 +201,6 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!userId,
   });
 
-  // Initialize processedMessagesRef with already read messages
   useEffect(() => {
     if (readMessages) {
       readMessages.forEach((read) => {
@@ -212,7 +213,6 @@ export default function MessageList({ channelId, userId }: Props) {
     }
   }, [readMessages, readDMs]);
 
-  // Query for messages with infinite loading
   const {
     data: messagesData,
     fetchNextPage,
@@ -270,12 +270,10 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!(channelId || userId),
   });
 
-  // Update the effect that initializes the scrollable element reference
   useEffect(() => {
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) return;
 
-    // Find and store the scrollable element
     const scrollableElement = scrollContainer.querySelector(
       "[data-radix-scroll-area-viewport]",
     );
@@ -284,16 +282,14 @@ export default function MessageList({ channelId, userId }: Props) {
       return;
     }
     scrollableElementRef.current = scrollableElement as HTMLDivElement;
-  }, [scrollRef.current]); // Only run when scrollRef.current changes
+  }, [scrollRef.current]);
 
-  // Enhanced infinite scroll with better load triggers and position restoration
   useEffect(() => {
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) return;
 
     const scrollableElement = scrollableElementRef.current;
     if (!scrollableElement) return;
-    // Create debounced function for saving scroll position
     const debouncedSavePosition = debounce((position: number) => {
       const storageKey = channelId
         ? `chat-scroll-position-channel-${channelId}`
@@ -304,7 +300,6 @@ export default function MessageList({ channelId, userId }: Props) {
       if (storageKey) {
         const maxScroll =
           scrollableElement.scrollHeight - scrollableElement.clientHeight;
-        // Only save if we're not at the bottom
         console.log(maxScroll, position);
         if (maxScroll - position > 100) {
           localStorage.setItem(storageKey, position.toString());
@@ -314,9 +309,8 @@ export default function MessageList({ channelId, userId }: Props) {
           console.log(`[Scroll] Cleared saved position for ${storageKey}`);
         }
       }
-    }, 1000); // Save position every 1 second
+    }, 1000);
 
-    // Load older messages when scrolling up
     const handleScroll = async () => {
       if (loadingMoreRef.current) return;
 
@@ -324,22 +318,18 @@ export default function MessageList({ channelId, userId }: Props) {
       const distanceFromTop = scrollTop;
       const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
 
-      // Save scroll position
       debouncedSavePosition(scrollTop);
 
-      // Load older messages when near the top
       if (distanceFromTop < 200 && hasNextPage && !isFetchingNextPage) {
         loadingMoreRef.current = true;
         console.log("[Scroll] Loading older messages...");
 
-        // Save current scroll position and heights
         const previousHeight = scrollHeight;
         const previousScrollTop = scrollTop;
 
         try {
           await fetchNextPage();
 
-          // Restore scroll position after new content is loaded
           setTimeout(() => {
             requestAnimationFrame(() => {
               if (scrollContainer) {
@@ -357,7 +347,6 @@ export default function MessageList({ channelId, userId }: Props) {
         }
       }
 
-      // Load newer messages when near the bottom
       if (
         distanceFromBottom < 200 &&
         hasPreviousPage &&
@@ -395,7 +384,6 @@ export default function MessageList({ channelId, userId }: Props) {
     userId,
   ]);
 
-  // Enhanced scroll position restoration
   useEffect(() => {
     if (!scrollRef.current) return;
 
@@ -411,14 +399,11 @@ export default function MessageList({ channelId, userId }: Props) {
     if (savedPosition && isInitialLoadRef.current) {
       isInitialLoadRef.current = false;
 
-      // Use a more robust approach to restore scroll position
       const restorePosition = () => {
         const targetPosition = parseInt(savedPosition);
         scrollableElement.scrollTop = targetPosition;
 
-        // Verify scroll position was set correctly
         if (Math.abs(scrollableElement.scrollTop - targetPosition) > 10) {
-          // If position wasn't set correctly, try again
           scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 50);
         } else {
           console.log(
@@ -427,10 +412,8 @@ export default function MessageList({ channelId, userId }: Props) {
         }
       };
 
-      // Initial attempt to restore scroll position
       scrollRestorationTimeoutRef.current = setTimeout(restorePosition, 100);
     } else if (!savedPosition) {
-      // If no saved position, scroll to bottom on initial load
       const scrollToBottom = () => {
         if (scrollableElement) {
           scrollableElement.scrollTop = scrollableElement.scrollHeight;
@@ -446,7 +429,6 @@ export default function MessageList({ channelId, userId }: Props) {
     };
   }, [channelId, userId, messagesData]);
 
-  // Enhanced updateLastRead function with retry mechanism and duplicate prevention
   const updateLastRead = useCallback(
     async (messageId: number, cid: number | null, uid: number | null) => {
       if (!messageId || processedMessagesRef.current.has(messageId) || !(cid || uid)) return;
@@ -473,18 +455,16 @@ export default function MessageList({ channelId, userId }: Props) {
             errorText,
           );
 
-          // Clear any existing retry timeout for this message
           if (retryTimeoutsRef.current.has(messageId)) {
             clearTimeout(retryTimeoutsRef.current.get(messageId));
             retryTimeoutsRef.current.delete(messageId);
           }
 
-          // Set up retry with exponential backoff
           const retryTimeout = setTimeout(() => {
             console.log(
               `[MessageTracking] Retrying to mark message ${messageId} as read`,
             );
-            processedMessagesRef.current.delete(messageId); // Allow retry
+            processedMessagesRef.current.delete(messageId);
             updateLastRead(messageId, cid, uid);
           }, 1000);
 
@@ -495,7 +475,6 @@ export default function MessageList({ channelId, userId }: Props) {
           );
           processedMessagesRef.current.add(messageId);
 
-          // Clear retry timeout if exists
           if (retryTimeoutsRef.current.has(messageId)) {
             clearTimeout(retryTimeoutsRef.current.get(messageId));
             retryTimeoutsRef.current.delete(messageId);
@@ -506,22 +485,18 @@ export default function MessageList({ channelId, userId }: Props) {
           "[MessageTracking] Error marking message as read:",
           error,
         );
-        // Reset processed state to allow retry
         processedMessagesRef.current.delete(messageId);
       }
     },
     [token],
   );
 
-  // Enhanced intersection observer setup with better visibility tracking
   useEffect(() => {
     if (!(channelId || userId)) return;
 
     const options: IntersectionObserverInit = {
       root: document.getElementById("scroll-container"),
-      // Using multiple thresholds for more granular visibility detection
       threshold: [0.1, 0.3, 0.5, 0.7],
-      // Add margin to start observing before elements are fully in view
       rootMargin: "50px 0px",
     };
 
@@ -532,23 +507,16 @@ export default function MessageList({ channelId, userId }: Props) {
         );
         const uid = parseInt(entry.target.getAttribute("data-user-id") || "0");
 
-        // Skip messages from the current user
         if (uid === currentUser?.id) {
           return;
         }
 
-        // Mark as read if message is at least 50% visible
         if (entry.intersectionRatio >= 0.5 && messageId) {
-          // console.log(
-          //   `[MessageTracking] Message ${messageId} is ${entry.intersectionRatio * 100}% visible`,
-          // );
 
-          // Clear any existing timeout
           if (debounceTimeoutRef.current) {
             clearTimeout(debounceTimeoutRef.current);
           }
 
-          // Reduced debounce time for better responsiveness
           debounceTimeoutRef.current = setTimeout(() => {
             updateLastRead(messageId, channelId, userId);
           }, 100);
@@ -562,23 +530,19 @@ export default function MessageList({ channelId, userId }: Props) {
     const observer = new IntersectionObserver(handleIntersection, options);
     observerRef.current = observer;
 
-    // Enhanced cleanup function
     return () => {
       console.log("[MessageTracking] Cleaning up intersection observer");
       if (debounceTimeoutRef.current) {
         clearTimeout(debounceTimeoutRef.current);
       }
-      // Clear all retry timeouts
       retryTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
       retryTimeoutsRef.current.clear();
       observer.disconnect();
       observerRef.current = null;
-      // Reset processed messages when changing channels
       processedMessagesRef.current.clear();
     };
   }, [channelId, updateLastRead, userId]);
 
-  // Improved scroll position persistence
   useEffect(() => {
     if (!(channelId || userId)) return;
     const storageKey = channelId
@@ -587,7 +551,6 @@ export default function MessageList({ channelId, userId }: Props) {
         ? `chat-scroll-position-user-${userId}`
         : "";
 
-    // Save position when unmounting or changing channels
     return () => {
       if (scrollableElementRef.current) {
         const position = scrollableElementRef.current.scrollTop;
@@ -595,7 +558,6 @@ export default function MessageList({ channelId, userId }: Props) {
           scrollableElementRef.current.scrollHeight -
           scrollableElementRef.current.clientHeight;
 
-        // Only save if we're not at the bottom
         if (maxScroll - position > 100) {
           localStorage.setItem(storageKey, position.toString());
           console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
@@ -607,11 +569,9 @@ export default function MessageList({ channelId, userId }: Props) {
     };
   }, [channelId, userId, updateLastRead]);
 
-  // Ensure new messages are observed when they're added
   useEffect(() => {
     if (!observerRef.current) return;
 
-    // Wait for a brief moment to ensure DOM is updated
     setTimeout(() => {
       const messageElements = document.querySelectorAll("[data-message-id]");
       console.log(
@@ -623,7 +583,6 @@ export default function MessageList({ channelId, userId }: Props) {
         }
       });
 
-      // Check for initially visible messages
       const observer = observerRef.current;
       if (observer) {
         messageElements.forEach((element) => {
@@ -635,7 +594,6 @@ export default function MessageList({ channelId, userId }: Props) {
               element.getAttribute("data-user-id") || "0",
             );
 
-            // Skip if already processed or from current user
             if (
               processedMessagesRef.current.has(messageId) ||
               uid === currentUser?.id
@@ -643,7 +601,6 @@ export default function MessageList({ channelId, userId }: Props) {
               return;
             }
 
-            // Force an initial intersection check
             observer.unobserve(element);
             observer.observe(element);
           }
@@ -652,7 +609,6 @@ export default function MessageList({ channelId, userId }: Props) {
     }, 100);
   }, [messagesData, channelId, currentUser?.id]);
 
-  // Save scroll position when leaving channel
   useEffect(() => {
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
@@ -663,7 +619,6 @@ export default function MessageList({ channelId, userId }: Props) {
       return;
     }
 
-    // Save position when unmounting
     return () => {
       if (scrollableElementRef.current) {
         const position = scrollableElementRef.current.scrollTop;
@@ -672,7 +627,6 @@ export default function MessageList({ channelId, userId }: Props) {
     };
   }, [channelId, userId]);
 
-  // Restore scroll position when mounting
   useEffect(() => {
     const storageKey = channelId
       ? `chat-scroll-position-channel-${channelId}`
@@ -682,7 +636,6 @@ export default function MessageList({ channelId, userId }: Props) {
     const savedPosition = localStorage.getItem(storageKey);
 
     if (scrollableElementRef.current && savedPosition) {
-      // Use setTimeout to ensure content is loaded
       setTimeout(() => {
         if (scrollableElementRef.current) {
           scrollableElementRef.current.scrollTop = parseInt(savedPosition);
@@ -691,7 +644,6 @@ export default function MessageList({ channelId, userId }: Props) {
     }
   }, [channelId, userId]);
 
-  // Query for chat partner in DM
   const { data: chatPartner } = useQuery<User>({
     queryKey: ["/api/users", userId],
     queryFn: async () => {
@@ -706,7 +658,6 @@ export default function MessageList({ channelId, userId }: Props) {
     enabled: !!userId,
   });
 
-  // Query for channel information
   const { data: channel } = useQuery<Channel>({
     queryKey: ["/api/channels", channelId],
     queryFn: async () => {
@@ -791,7 +742,6 @@ export default function MessageList({ channelId, userId }: Props) {
                 new Date(previousMessage.createdAt!).getTime() >
                 300000;
 
-            // Add date header if date changes
             const messageDate = new Date(message.createdAt!);
             const previousDate = previousMessage
               ? new Date(previousMessage.createdAt!)
@@ -827,36 +777,22 @@ export default function MessageList({ channelId, userId }: Props) {
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
-                      {message.reactions && (
+                      {message.reactions && Object.keys(message.reactions).length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {Object.entries(message.reactions).map(([emoji, userIds]) => (
-                            <button
-                              key={emoji}
-                              onClick={() => {
-                                const addReactionMutation = useMutation({
-                                  mutationFn: async () => {
-                                    const response = await fetch(`/api/messages/${message.id}/react`, {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                        Authorization: `Bearer ${token}`,
-                                      },
-                                      body: JSON.stringify({ emoji }),
-                                    });
-                                    if (!response.ok) throw new Error("Failed to add reaction");
-                                    return response.json();
-                                  },
-                                  onSuccess: () => {
-                                    queryClient.invalidateQueries({ queryKey: ["messages", message.channelId] });
-                                  },
-                                });
-                                addReactionMutation.mutate();
-                              }}
-                              className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full"
-                            >
-                              {emoji} <span className="opacity-50">{userIds.length}</span>
-                            </button>
-                          ))}
+                          {Object.entries(message.reactions).map(([emoji, userIds]) => {
+                            const hasReacted = userIds.includes(currentUser?.id || 0);
+                            return (
+                              <button
+                                key={emoji}
+                                onClick={() => addReactionMutation.mutate(emoji)}
+                                className={`inline-flex items-center gap-1 text-xs ${
+                                  hasReacted ? 'bg-accent' : 'bg-background'
+                                } hover:bg-accent px-2 py-0.5 rounded-full`}
+                              >
+                                {emoji} <span className="opacity-50">{userIds.length}</span>
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -897,7 +833,6 @@ export default function MessageList({ channelId, userId }: Props) {
   );
 }
 
-// Utility function for scroll event debouncing
 function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number,
