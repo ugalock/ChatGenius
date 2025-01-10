@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback } from "react";
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { useQuery, useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -20,8 +20,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, Smile, MoreHorizontal } from "lucide-react";
+import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
+import { queryClient } from "@/lib/queryClient";
 
 // Define the structure for message reactions
 interface MessageReaction {
@@ -82,11 +89,53 @@ const DateHeader = ({ date }: { date: Date }) => {
 
 // Update the MessageActions component to handle reactions properly
 const MessageActions = ({ message }: { message: ExtendedMessage }) => {
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const { token } = useUser();
+
+  const addReactionMutation = useMutation({
+    mutationFn: async (emoji: string) => {
+      const response = await fetch(`/api/messages/${message.id}/react`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ emoji }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to add reaction");
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalidate the messages query to refresh the reactions
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", message.channelId, "messages"] });
+    },
+  });
+
+  const handleEmojiSelect = (emojiData: EmojiClickData) => {
+    addReactionMutation.mutate(emojiData.emoji);
+    setShowEmojiPicker(false);
+  };
+
   return (
     <div className="opacity-0 group-hover:opacity-100 absolute right-4 top-0 flex items-center gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8">
-        <Smile className="h-4 w-4" />
-      </Button>
+      <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <Smile className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="p-0 border-none" align="end">
+          <EmojiPicker
+            onEmojiClick={handleEmojiSelect}
+            width={320}
+            height={400}
+          />
+        </PopoverContent>
+      </Popover>
       <Button variant="ghost" size="icon" className="h-8 w-8">
         <MessageSquare className="h-4 w-4" />
       </Button>
@@ -780,7 +829,7 @@ export default function MessageList({ channelId, userId }: Props) {
                       {message.reactions && Object.entries(message.reactions).map(([emoji, userIds]) => (
                         <button
                           key={emoji}
-                          className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full"
+                          className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full mr-1"
                         >
                           {emoji} <span className="opacity-50">{userIds.length}</span>
                         </button>

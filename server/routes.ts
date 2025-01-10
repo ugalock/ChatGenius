@@ -1,3 +1,5 @@
+import { eq, and, or, desc, asc, sql, lt, gt } from "drizzle-orm";
+import { z } from "zod";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupWebSocket } from "./ws";
@@ -12,9 +14,7 @@ import {
   channelUnreads,
   messageReads,
 } from "@db/schema";
-import { eq, and, or, desc, asc, sql, lt, gt } from "drizzle-orm";
 import { log } from "./vite";
-import { z } from "zod";
 
 // Channel creation validation schema
 const createChannelSchema = z.object({
@@ -29,6 +29,37 @@ const messageQuerySchema = z.object({
   after: z.string().optional(),
   limit: z.string().default("50"),
 });
+
+// Reaction schema
+const reactionSchema = z.object({
+  emoji: z.string(),
+});
+
+// WebSocket message types and payloads
+interface BaseWSPayload {
+  channelId?: number;
+  userId?: number;
+  messageId?: number;
+}
+
+interface MessagePayload extends BaseWSPayload {
+  content: string;
+  user: {
+    id: number;
+    username: string;
+    avatar?: string | null;
+    status?: string;
+  };
+}
+
+interface ReactionPayload extends BaseWSPayload {
+  reactions: Record<string, number[]>;
+}
+
+interface WSMessage {
+  type: "message" | "direct_message" | "channel_created" | "unread_update" | "message_read" | "direct_message_read" | "message_reaction";
+  payload: MessagePayload | ReactionPayload | BaseWSPayload;
+}
 
 export function registerRoutes(app: Express): Server {
   const httpServer = createServer(app);
@@ -386,12 +417,21 @@ export function registerRoutes(app: Express): Server {
         });
 
         // Send message through WebSocket
+        const messagePayload: MessagePayload = {
+          ...result,
+          channelId,
+          content: result.content,
+          user: {
+            id: result.userId,
+            username: result.user.username,
+            avatar: result.user.avatar,
+            status: result.user.status,
+          },
+        };
+
         ws.broadcast({
           type: "message",
-          payload: {
-            ...result,
-            channelId,
-          },
+          payload: messagePayload,
         });
 
         // Broadcast unread update
@@ -517,7 +557,7 @@ export function registerRoutes(app: Express): Server {
         .where(eq(directMessages.id, message.id))
         .limit(1);
 
-      const fullMessage = {
+      const fullMessage: MessagePayload = {
         ...messageWithUser.message,
         user: {
           id: messageWithUser.user.id,
@@ -525,6 +565,7 @@ export function registerRoutes(app: Express): Server {
           avatar: messageWithUser.user.avatar,
           status: messageWithUser.user.status,
         },
+        content: messageWithUser.message.content,
       };
 
       // Send direct message through WebSocket
@@ -673,6 +714,81 @@ export function registerRoutes(app: Express): Server {
     } catch (error) {
       log(`[ERROR] Failed to mark message as read: ${error}`);
       res.status(500).json({ message: "Failed to mark message as read" });
+    }
+  });
+
+  // Add reactions to messages
+  app.post("/api/messages/:messageId/react", requireAuth, async (req, res) => {
+    try {
+      const messageId = parseInt(req.params.messageId);
+      const result = reactionSchema.safeParse(req.body);
+
+      if (!result.success) {
+        return res.status(400).json({
+          message: "Invalid input",
+          errors: result.error.issues.map((i) => i.message),
+        });
+      }
+
+      const { emoji } = result.data;
+      const userId = req.user!.id;
+
+      // First check if the message exists and get its current reactions
+      const [message] = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1);
+
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+
+      // Initialize or update reactions
+      const currentReactions = (message.reactions as Record<string, number[]>) || {};
+      const userIds = currentReactions[emoji] || [];
+
+      // Toggle reaction: remove if user already reacted, add if not
+      const updatedUserIds = userIds.includes(userId)
+        ? userIds.filter((id) => id !== userId)
+        : [...userIds, userId];
+
+      const updatedReactions = {
+        ...currentReactions,
+        [emoji]: updatedUserIds,
+      };
+
+      // Remove emoji key if no users are reacting with it anymore
+      if (updatedUserIds.length === 0) {
+        delete updatedReactions[emoji];
+      }
+
+      // Update the message with new reactions
+      const [updatedMessage] = await db
+        .update(messages)
+        .set({
+          reactions: updatedReactions,
+        })
+        .where(eq(messages.id, messageId))
+        .returning();
+
+      // Broadcast reaction update
+      const reactionPayload: ReactionPayload = {
+        messageId,
+        reactions: updatedReactions,
+        userId,
+        channelId: message.channelId ?? undefined,
+      };
+
+      ws.broadcast({
+        type: "message_reaction",
+        payload: reactionPayload,
+      });
+
+      res.json(updatedMessage);
+    } catch (error) {
+      log(`[ERROR] Failed to update message reaction: ${error}`);
+      res.status(500).json({ message: "Failed to update message reaction" });
     }
   });
 

@@ -39,7 +39,7 @@ export const messages = pgTable("messages", {
   channelId: integer("channel_id").references(() => channels.id),
   threadId: integer("thread_id").references(() => messages.id),
   attachments: jsonb("attachments"),
-  reactions: jsonb("reactions").$type<Record<string, number[]>>(),
+  reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -93,7 +93,7 @@ export const directMessages = pgTable("direct_messages", {
     .notNull(),
   threadId: integer("thread_id").references(() => directMessages.id),
   attachments: jsonb("attachments"),
-  reactions: jsonb("reactions").$type<Record<string, number[]>>(),
+  reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -198,13 +198,7 @@ export const messageReadsRelations = relations(messageReads, ({ one }) => ({
   }),
 }));
 
-export const insertUserSchema = createInsertSchema(users, {
-  username: z.string().min(3).max(50),
-  password: z.string().min(6),
-  status: z.string().optional(),
-  avatar: z.string().optional(),
-});
-
+export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);
 export const insertChannelSchema = createInsertSchema(channels);
 export const selectChannelSchema = createSelectSchema(channels);
