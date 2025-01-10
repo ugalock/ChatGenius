@@ -40,6 +40,7 @@ export default function ProfilePage() {
     const file = event.target.files?.[0];
     if (file) {
       setAvatarFile(file);
+      // Create a preview URL for the selected file
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewUrl(reader.result as string);
@@ -104,8 +105,13 @@ export default function ProfilePage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <div className="flex flex-col items-center space-y-4">
                 <Avatar className="h-24 w-24">
-                  <AvatarImage src={previewUrl || user?.avatar} />
-                  <AvatarFallback>{user?.username[0].toUpperCase()}</AvatarFallback>
+                  {previewUrl ? (
+                    <AvatarImage src={previewUrl} alt="Avatar preview" />
+                  ) : user?.avatar ? (
+                    <AvatarImage src={user.avatar} alt={user.username} />
+                  ) : (
+                    <AvatarFallback>{user?.username?.[0].toUpperCase()}</AvatarFallback>
+                  )}
                 </Avatar>
                 <div className="flex flex-col items-center">
                   <Label htmlFor="avatar" className="cursor-pointer text-blue-500 hover:text-blue-600">

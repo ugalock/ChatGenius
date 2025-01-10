@@ -16,8 +16,11 @@ export default function ProfileBar() {
     <div className="mt-auto p-4 border-t border-gray-700 flex items-center">
       <div className="relative">
         <Avatar className="h-5 w-5 mr-1">
-          <AvatarImage src={user?.avatar || undefined} />
-          <AvatarFallback>{user?.username[0].toUpperCase()}</AvatarFallback>
+          {user?.avatar ? (
+            <AvatarImage src={user.avatar} alt={user?.username || 'User avatar'} />
+          ) : (
+            <AvatarFallback>{user?.username?.[0].toUpperCase()}</AvatarFallback>
+          )}
         </Avatar>
         <div
           className={
