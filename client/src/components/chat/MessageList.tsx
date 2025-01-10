@@ -16,14 +16,13 @@ import {
   isYesterday,
   isSameDay,
 } from "date-fns";
-import { Search, Users, FileText, ArrowLeft, MessageSquare, Image as ImageIcon, Download } from "lucide-react";
+import { Search, Users, File, ArrowLeft, MessageSquare } from "lucide-react";
 import type {
   Message,
   User,
   DirectMessage,
   Channel,
   MessageRead,
-  Attachment,
 } from "@db/schema";
 import MessageInput from "./MessageInput";
 import {
@@ -44,15 +43,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
-
-// Utility function to format file sizes
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
+import { File as FileIcon, Download } from "lucide-react";
+import type { Attachment } from "@db/schema";
 
 // Update type definition for message reactions and thread support
 interface MessageReaction {
@@ -872,58 +864,25 @@ export default function MessageList({
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
                       {message.attachments && message.attachments.length > 0 && (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-2 space-y-1">
                           {message.attachments.map((attachment, index) => (
                             <div
                               key={index}
-                              className="flex items-start gap-2 bg-accent/30 p-2 rounded-md text-sm max-w-md group hover:bg-accent/40 transition-colors"
+                              className="flex items-center gap-2 bg-accent/30 p-2 rounded-md text-sm w-fit"
                             >
-                              {attachment.fileType?.startsWith('image/') ? (
-                                <div className="relative w-full">
-                                  <img
-                                    src={attachment.url}
-                                    alt={attachment.fileName}
-                                    className="max-h-48 rounded-md object-cover"
-                                    loading="lazy"
-                                  />
-                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded-md">
-                                    <a
-                                      href={attachment.url}
-                                      download
-                                      className="flex items-center gap-2 text-white hover:underline p-2"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <Download className="h-4 w-4" />
-                                      Download
-                                    </a>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2 w-full">
-                                  {attachment.fileType?.includes('pdf') ? (
-                                    <FileText className="h-5 w-5 text-red-500" />
-                                  ) : attachment.fileType?.includes('text') ? (
-                                    <FileText className="h-5 w-5 text-blue-500" />
-                                  ) : (
-                                    <FileText className="h-5 w-5 text-muted-foreground" />
-                                  )}
-                                  <div className="flex-1 min-w-0">
-                                    <p className="truncate font-medium">{attachment.fileName}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {formatFileSize(attachment.fileSize)}
-                                    </p>
-                                  </div>
-                                  <a
-                                    href={attachment.url}
-                                    download
-                                    className="flex items-center gap-1 text-primary hover:underline ml-2"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <Download className="h-4 w-4" />
-                                    Download
-                                  </a>
-                                </div>
-                              )}
+                              <FileIcon className="h-4 w-4 text-muted-foreground" />
+                              <span className="max-w-[200px] truncate">
+                                {attachment.fileName}
+                              </span>
+                              <a
+                                href={attachment.url}
+                                download
+                                className="flex items-center gap-1 text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Download className="h-4 w-4" />
+                                Download
+                              </a>
                             </div>
                           ))}
                         </div>
@@ -986,7 +945,8 @@ export default function MessageList({
         {isFetchingPreviousPage && (
           <div className="text-center py-2 text-muted-foreground">
             Loading newer messages...
-          </div>        )}
+          </div>
+        )}
       </ScrollArea>
       <Separator />
       <div className="p-4">
@@ -1014,12 +974,4 @@ function debounce<T extends (...args: any[]) => any>(
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
