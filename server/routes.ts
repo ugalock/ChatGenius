@@ -1051,5 +1051,37 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // Add profile update endpoint after the other user routes
+  app.patch("/api/users/profile", requireAuth, upload.single("avatar"), async (req, res) => {
+    try {
+      const userId = req.user!.id;
+      const { bio } = req.body;
+      const avatarFile = req.file;
+
+      // Prepare update data
+      const updateData: { bio?: string; avatar?: string } = {};
+      if (bio !== undefined) {
+        updateData.bio = bio;
+      }
+      if (avatarFile) {
+        updateData.avatar = `/uploads/${avatarFile.filename}`;
+      }
+
+      // Update user profile
+      const [updatedUser] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, userId))
+        .returning();
+
+      // Remove password from response
+      const { password, ...userWithoutPassword } = updatedUser;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
   return httpServer;
 }
