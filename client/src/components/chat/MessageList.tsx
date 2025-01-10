@@ -68,7 +68,7 @@ interface MessagesResponse {
   prevCursor: string | null;
 }
 
-const MESSAGES_PER_PAGE = 50;
+const MESSAGES_PER_PAGE = 1000;
 
 const DateHeader = ({ date }: { date: Date }) => {
   let displayDate = "";
@@ -102,7 +102,11 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ emoji }),
+        body: JSON.stringify({ 
+          emoji,
+          isDirectMessage: 'toUserId' in message 
+        }),
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -112,11 +116,24 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
       return response.json();
     },
     onSuccess: () => {
-      // Invalidate the appropriate query based on message type
+      // Invalidate the appropriate query based on message type and thread context
       if ('channelId' in message && message.channelId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/channels", message.channelId, "messages"] });
-      } else if ('toUserId' in message && message.toUserId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/dm", message.toUserId] });
+        queryClient.invalidateQueries({ 
+          queryKey: [
+            "/api/channels", 
+            message.channelId, 
+            "messages", 
+            message.threadId || undefined
+          ] 
+        });
+      } else if ('toUserId' in message) {
+        queryClient.invalidateQueries({ 
+          queryKey: [
+            "/api/dm", 
+            message.toUserId, 
+            message.threadId || undefined
+          ] 
+        });
       }
     },
   });
@@ -729,7 +746,7 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
                   chatPartner.status === "online"
                     ? "bg-green-500"
                     : "bg-gray-500"
-                }`}
+                  }`}
               />
             </div>
           )}

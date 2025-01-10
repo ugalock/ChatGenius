@@ -70,7 +70,7 @@ async function createMessage(data: {
   channelId: number;
   threadId?: number | null;
 }) {
-  return await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [message] = await tx
       .insert(messages)
       .values({
@@ -101,6 +101,8 @@ async function createMessage(data: {
       },
     };
   });
+
+  return result;
 }
 
 export function registerRoutes(app: Express): Server {
@@ -361,7 +363,19 @@ export function registerRoutes(app: Express): Server {
         const channelId = parseInt(req.params.channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        let baseQuery = db
+        // Ensure channelId is valid
+        const [channel] = await db
+          .select()
+          .from(channels)
+          .where(eq(channels.id, channelId))
+          .limit(1);
+
+        if (!channel) {
+          return res.status(404).json({ message: "Channel not found" });
+        }
+
+        // Build base query
+        const query = db
           .select({
             id: messages.id,
             content: messages.content,
@@ -378,42 +392,48 @@ export function registerRoutes(app: Express): Server {
               status: users.status,
             },
             replyCount: sql<number>`
-              CAST((
-                SELECT COUNT(*)
-                FROM ${messages} replies
-                WHERE replies.thread_id = ${messages.id}
-              ) AS integer)
+              COALESCE(
+                CAST((
+                  SELECT COUNT(*)
+                  FROM ${messages} replies
+                  WHERE replies.thread_id = ${messages.id}
+                ) AS integer),
+                0
+              )
             `,
           })
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
           .where(eq(messages.channelId, channelId));
 
-        // Add thread filtering if threadId is provided
+        // Add conditions to the query
+        let finalQuery = query;
+
         if (threadId) {
-          baseQuery = baseQuery.where(
+          finalQuery = finalQuery.where(
             or(
               eq(messages.id, parseInt(threadId)),
               eq(messages.threadId, parseInt(threadId))
             )
           );
         } else {
-          baseQuery = baseQuery.where(sql`${messages.threadId} IS NULL`);
+          finalQuery = finalQuery.where(sql`${messages.threadId} IS NULL`);
         }
 
-        // Add pagination conditions
         if (before) {
-          baseQuery = baseQuery.where(lt(messages.id, parseInt(before)));
-        } else if (after) {
-          baseQuery = baseQuery.where(gt(messages.id, parseInt(after)));
+          finalQuery = finalQuery.where(lt(messages.id, parseInt(before)));
         }
 
-        // Get messages ordered by creation time
-        const channelMessages = await baseQuery
+        if (after) {
+          finalQuery = finalQuery.where(gt(messages.id, parseInt(after)));
+        }
+
+        // Execute query with order and limit
+        const channelMessages = await finalQuery
           .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
-        // Ensure reactions are properly formatted
+        // Format messages
         const formattedMessages = channelMessages.map(msg => ({
           ...msg,
           reactions: msg.reactions || {},
@@ -441,7 +461,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to fetch messages: ${error}`);
         res.status(500).json({ message: "Failed to fetch messages" });
       }
-    },
+    }
   );
 
   app.post(
@@ -477,7 +497,7 @@ export function registerRoutes(app: Express): Server {
         log(`[ERROR] Failed to post message: ${error}`);
         res.status(500).json({ message: "Failed to post message" });
       }
-    },
+    }
   );
 
   // Direct Messages
@@ -515,11 +535,14 @@ export function registerRoutes(app: Express): Server {
             status: users.status,
           },
           replyCount: sql<number>`
-            CAST((
-              SELECT COUNT(*)
-              FROM ${directMessages} replies
-              WHERE replies.thread_id = ${directMessages.id}
-            ) AS integer)
+            COALESCE(
+              CAST((
+                SELECT COUNT(*)
+                FROM ${directMessages} replies
+                WHERE replies.thread_id = ${directMessages.id}
+              ) AS integer),
+              0
+            )
           `,
         })
         .from(directMessages)
@@ -774,6 +797,7 @@ export function registerRoutes(app: Express): Server {
     try {
       const messageId = parseInt(req.params.messageId);
       const result = reactionSchema.safeParse(req.body);
+      const { isDirectMessage } = req.body;
 
       if (!result.success) {
         return res.status(400).json({
@@ -785,17 +809,20 @@ export function registerRoutes(app: Express): Server {
       const { emoji } = result.data;
       const userId = req.user!.id;
 
-      // Try to find the message in channel messages first
-      let [message] = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.id, messageId))
-        .limit(1);
+      let message;
+      let isDirectMessageType = false;
 
-      let isDirectMessage = false;
+      // Try to find the message in channel messages first if not explicitly a DM
+      if (!isDirectMessage) {
+        [message] = await db
+          .select()
+          .from(messages)
+          .where(eq(messages.id, messageId))
+          .limit(1);
+      }
 
-      // If not found in channel messages, check direct messages
-      if (!message) {
+      // If not found in channel messages or explicitly a DM, check direct messages
+      if (!message || isDirectMessage) {
         [message] = await db
           .select()
           .from(directMessages)
@@ -806,14 +833,14 @@ export function registerRoutes(app: Express): Server {
           return res.status(404).json({ message: "Message not found" });
         }
 
-        isDirectMessage = true;
+        isDirectMessageType = true;
       }
 
       // Initialize or update reactions
-      const currentReactions = message.reactions as Record<string, number[]> || {};
+      const currentReactions = (message.reactions as Record<string, number[]>) || {};
       const userIds = currentReactions[emoji] || [];
 
-      // Toggle reaction: remove if user already reacted, add if not
+      // Toggle reaction
       const updatedUserIds = userIds.includes(userId)
         ? userIds.filter((id) => id !== userId)
         : [...userIds, userId];
@@ -828,9 +855,9 @@ export function registerRoutes(app: Express): Server {
         delete updatedReactions[emoji];
       }
 
-      // Update the message with new reactions based on message type
+      // Update the appropriate message type
       let updatedMessage;
-      if (isDirectMessage) {
+      if (isDirectMessageType) {
         [updatedMessage] = await db
           .update(directMessages)
           .set({
@@ -848,17 +875,16 @@ export function registerRoutes(app: Express): Server {
           .returning();
       }
 
-      // Broadcast reaction update
-      const reactionPayload = {
-        messageId,
-        reactions: updatedReactions,
-        userId,
-        channelId: isDirectMessage ? undefined : (message as any).channelId,
-      };
-
+      // Broadcast reaction update with the correct message type
       ws.broadcast({
         type: "message_reaction",
-        payload: reactionPayload,
+        payload: {
+          messageId,
+          reactions: updatedReactions,
+          userId,
+          channelId: isDirectMessageType ? undefined : message.channelId,
+          isDirectMessage: isDirectMessageType,
+        },
       });
 
       res.json(updatedMessage);
