@@ -52,6 +52,8 @@ import {
   Music,
   Archive,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Textarea } from "@/components/ui/textarea";
 
 // Update type definition for message reactions and thread support
 interface MessageReaction {
@@ -63,10 +65,12 @@ interface MessageReactions {
   [key: string]: number[];
 }
 
-type ExtendedMessage = (
-  | (Message & { threadId: number | null })
-  | (DirectMessage & { threadId: number | null })
-) & {
+type BaseMessage = {
+  id: number;
+  content: string;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  threadId: number | null;
   user: User;
   isRead?: boolean;
   reactions?: MessageReactions;
@@ -74,56 +78,162 @@ type ExtendedMessage = (
   attachments?: Attachment[];
 };
 
-// Update props to include threadId
-type Props = {
+type ChannelMessage = BaseMessage & {
+  userId: number;
   channelId: number | null;
-  userId: number | null;
-  threadId?: number | null;
-  threadStateChanged: (threadId: number | null | undefined) => void;
 };
 
-interface PageParam {
-  before: string | null;
-  after: string | null;
-}
-
-interface MessagesResponse {
-  data: ExtendedMessage[];
-  nextCursor: string | null;
-  prevCursor: string | null;
-}
-
-const MESSAGES_PER_PAGE = 1000;
-
-const DateHeader = ({ date }: { date: Date }) => {
-  let displayDate = "";
-  if (isToday(date)) {
-    displayDate = "Today";
-  } else if (isYesterday(date)) {
-    displayDate = "Yesterday";
-  } else {
-    displayDate = format(date, "MMMM d, yyyy");
-  }
-
-  return (
-    <div className="sticky top-2 z-10 flex justify-center my-6">
-      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
-        {displayDate}
-      </div>
-    </div>
-  );
+type DirectMessageType = BaseMessage & {
+  fromUserId: number;
+  toUserId: number;
 };
+
+type ExtendedMessage = ChannelMessage | DirectMessageType;
+
+interface MessageActionsProps {
+  message: ExtendedMessage;
+  replyCallback: (threadId: number | null | undefined) => void;
+  isEditing: boolean;
+  setIsEditing: (value: boolean) => void;
+  editContent: string;
+  setEditContent: (value: string) => void;
+  handleSaveEdit: () => void;
+}
 
 const MessageActions = ({
   message,
   replyCallback,
-}: {
-  message: ExtendedMessage;
-  replyCallback: (threadId: number | null | undefined) => void;
-}) => {
+  isEditing,
+  setIsEditing,
+  editContent,
+  setEditContent,
+  handleSaveEdit,
+}: MessageActionsProps) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const { user: currentUser, token } = useUser();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const isOwner = currentUser?.id === message.user.id;
+
+  const editMessageMutation = useMutation({
+    mutationFn: async (content: string) => {
+      const url = "toUserId" in message
+        ? `/api/dm/${message.id}`
+        : `/api/messages/${message.id}`;
+
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          content,
+          isDirectMessage: "toUserId" in message,
+          toUserId: "toUserId" in message ? message.toUserId : undefined,
+          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
+        }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      if ("channelId" in message && message.channelId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/channels",
+            message.channelId,
+            "messages",
+            message.threadId || undefined,
+          ],
+        });
+      } else if ("toUserId" in message) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/dm",
+            message.toUserId,
+            message.threadId || undefined,
+          ],
+        });
+      }
+      setIsEditing(false);
+      toast({
+        title: "Success",
+        description: "Message updated successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update message",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMessageMutation = useMutation({
+    mutationFn: async () => {
+      const url = "toUserId" in message
+        ? `/api/dm/${message.id}`
+        : `/api/messages/${message.id}`;
+
+      const response = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          isDirectMessage: "toUserId" in message,
+          toUserId: "toUserId" in message ? message.toUserId : undefined,
+          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
+        }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      if ("channelId" in message && message.channelId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/channels",
+            message.channelId,
+            "messages",
+            message.threadId || undefined,
+          ],
+        });
+      } else if ("toUserId" in message) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/dm",
+            message.toUserId,
+            message.threadId || undefined,
+          ],
+        });
+      }
+      toast({
+        title: "Success",
+        description: "Message deleted successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete message",
+        variant: "destructive",
+      });
+    },
+  });
 
   const addReactionMutation = useMutation({
     mutationFn: async (emoji: string) => {
@@ -136,8 +246,8 @@ const MessageActions = ({
         body: JSON.stringify({
           emoji,
           isDirectMessage: "toUserId" in message,
-          toUserId: message?.toUserId,
-          fromUserId: message?.fromUserId,
+          toUserId: "toUserId" in message ? message.toUserId : undefined,
+          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
         }),
         credentials: "include",
       });
@@ -203,22 +313,73 @@ const MessageActions = ({
       >
         <MessageSquareIcon className="h-4 w-4" />
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem>Edit</DropdownMenuItem>
-          <DropdownMenuItem className="text-destructive">
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {isOwner && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setIsEditing(true)}>
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={() => {
+                if (window.confirm("Are you sure you want to delete this message?")) {
+                  deleteMessageMutation.mutate();
+                }
+              }}
+            >
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 };
+
+type Props = {
+  channelId: number | null;
+  userId: number | null;
+  threadId?: number | null;
+  threadStateChanged: (threadId: number | null | undefined) => void;
+};
+
+interface PageParam {
+  before: string | null;
+  after: string | null;
+}
+
+interface MessagesResponse {
+  data: ExtendedMessage[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+}
+
+const MESSAGES_PER_PAGE = 1000;
+
+const DateHeader = ({ date }: { date: Date }) => {
+  let displayDate = "";
+  if (isToday(date)) {
+    displayDate = "Today";
+  } else if (isYesterday(date)) {
+    displayDate = "Yesterday";
+  } else {
+    displayDate = format(date, "MMMM d, yyyy");
+  }
+
+  return (
+    <div className="sticky top-2 z-10 flex justify-center my-6">
+      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
+        {displayDate}
+      </div>
+    </div>
+  );
+};
+
 
 export default function MessageList({
   channelId,
@@ -826,6 +987,8 @@ export default function MessageList({
         )}
         <div className="space-y-4">
           {allMessages.map((message: ExtendedMessage, i: number) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [editContent, setEditContent] = useState(message.content);
             const previousMessage = allMessages[i - 1];
             const showHeader =
               !previousMessage ||
@@ -841,27 +1004,33 @@ export default function MessageList({
             const showDateHeader =
               !previousDate || !isSameDay(messageDate, previousDate);
 
+            const handleSaveEdit = () => {
+              if (editContent.trim() === "") return;
+              editMessageMutation.mutate(editContent.trim());
+            };
+
             return (
               <div key={message.id}>
                 {showDateHeader && <DateHeader date={messageDate} />}
                 <div
                   className="group relative"
                   data-message-id={message.id}
-                  data-user-id={message.user.id}
+                  data-user-id={"userId" in message ? message.userId : message.fromUserId}
                 >
                   {showHeader && (
-                    <div className="flex items-center gap-2 mb-2">
-                      <Avatar className="h-10 w-10">
+                    <div className="flex items-start mb-2 gap-2">
+                      <Avatar className="h-8 w-8 mt-0.5">
                         <AvatarImage src={message.user.avatar || undefined} />
                         <AvatarFallback>
                           {message.user.username[0].toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-semibold">
+                      <div>
+                        <span className="text-sm font-semibold">
                           {message.user.username}
                         </span>
-                        <span className="text-sm text-muted-foreground">
+                        </span>
+                        <span className="text-xs text-muted-foreground ml-2">
                           {format(messageDate, "h:mm a")}
                         </span>
                       </div>
@@ -869,7 +1038,45 @@ export default function MessageList({
                   )}
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
-                      <p className="text-foreground">{message.content}</p>
+                      {isEditing ? (
+                        <div className="flex gap-2">
+                          <Textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            className="min-h-[44px] flex-1"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSaveEdit();
+                              } else if (e.key === "Escape") {
+                                setIsEditing(false);
+                                setEditContent(message.content);
+                              }
+                            }}
+                          />
+                          <div className="flex gap-1">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setIsEditing(false);
+                                setEditContent(message.content);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={handleSaveEdit}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-foreground">{message.content}</p>
+                      )}
                       {message.attachments &&
                         message.attachments.length > 0 && (
                           <div className="mt-2 space-y-2">
@@ -984,6 +1191,11 @@ export default function MessageList({
                     <MessageActions
                       message={message}
                       replyCallback={threadStateChanged}
+                      isEditing={isEditing}
+                      setIsEditing={setIsEditing}
+                      editContent={editContent}
+                      setEditContent={setEditContent}
+                      handleSaveEdit={handleSaveEdit}
                     />
                   </div>
                   {!threadId && (message.replyCount || 0) > 0 && (
@@ -1045,9 +1257,9 @@ function debounce<T extends (...args: any[]) => any>(
 }
 
 function formatFileSize(bytes: number) {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return "0 Bytes";
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const sizes = ["Bytes", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }

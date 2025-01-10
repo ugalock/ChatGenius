@@ -96,8 +96,8 @@ interface ReactionPayload extends BaseWSPayload {
 
 interface WSMessage {
   type: "message" | "direct_message" | "channel_created" | "unread_update" |
-        "message_read" | "direct_message_read" | "message_reaction";
-  payload: MessagePayload | ReactionPayload | BaseWSPayload;
+        "message_read" | "direct_message_read" | "message_reaction" | "message_deleted";
+  payload: MessagePayload | ReactionPayload | BaseWSPayload | {messageId: number; channelId?: number; fromUserId?: number; toUserId?: number;};
 }
 
 // Fix the message creation transaction
@@ -1029,7 +1029,7 @@ export function registerRoutes(app: Express): Server {
           .returning();
       }
 
-      // Broadcast reaction update with the correct message type
+      //      // Broadcast reaction update with the correct message type
       ws.broadcast({
         type: "message_reaction",
         payload: {
@@ -1081,6 +1081,231 @@ export function registerRoutes(app: Express): Server {
       console.error("Error updating profile:", error);
       res.status(500).json({ message: "Failed to update profile" });
     }
+  });
+
+  // Add these new routes after the existing message routes
+
+  // Edit message endpoint
+  app.patch("/api/messages/:messageId", requireAuth, async (req, res) => {
+    try {
+      const messageId = parseInt(req.params.messageId);
+      const { content, isDirectMessage } = req.body;
+      const userId = req.user!.id;
+
+      if (!content || content.trim() === "") {
+        return res.status(400).json({ message: "Message content is required" });
+      }
+
+      if (isDirectMessage) {
+        // Handle direct message edit
+        const [message] = await db
+          .select()
+          .from(directMessages)
+          .where(eq(directMessages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user owns the message
+        if (message.fromUserId !== userId) {
+          return res.status(403).json({ message: "Unauthorized to edit this message" });
+        }
+
+        // Update the message
+        const [updatedMessage] = await db
+          .update(directMessages)
+          .set({
+            content: content.trim(),
+            updatedAt: new Date(),
+          })
+          .where(eq(directMessages.id, messageId))
+          .returning();
+
+        // Get user details for the response
+        const [messageWithUser] = await db
+          .select({
+            message: directMessages,
+            user: users,
+          })
+          .from(directMessages)
+          .innerJoin(users, eq(directMessages.fromUserId, users.id))
+          .where(eq(directMessages.id, messageId))
+          .limit(1);
+
+        const fullMessage = {
+          ...messageWithUser.message,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status,
+          },
+        };
+
+        // Broadcast the update
+        ws.broadcast({
+          type: "direct_message",
+          payload: fullMessage,
+        });
+
+        res.json(fullMessage);
+      } else {
+        // Handle channel message edit
+        const [message] = await db
+          .select()
+          .from(messages)
+          .where(eq(messages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user owns the message
+        if (message.userId !== userId) {
+          return res.status(403).json({ message: "Unauthorized to edit this message" });
+        }
+
+        // Update the message
+        const [updatedMessage] = await db
+          .update(messages)
+          .set({
+            content: content.trim(),
+            updatedAt: new Date(),
+          })
+          .where(eq(messages.id, messageId))
+          .returning();
+
+        // Get user details for the response
+        const [messageWithUser] = await db
+          .select({
+            message: messages,
+            user: users,
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.userId, users.id))
+          .where(eq(messages.id, messageId))
+          .limit(1);
+
+        const fullMessage = {
+          ...messageWithUser.message,
+          user: {
+            id: messageWithUser.user.id,
+            username: messageWithUser.user.username,
+            avatar: messageWithUser.user.avatar,
+            status: messageWithUser.user.status,
+          },
+        };
+
+        // Broadcast the update
+        ws.broadcast({
+          type: "message",
+          payload: {
+            ...fullMessage,
+            channelId: message.channelId,
+            content: fullMessage.content,
+            user: fullMessage.user,
+          },
+        });
+
+        res.json(fullMessage);
+      }
+    } catch (error) {
+      log(`[ERROR] Failed to edit message: ${error}`);
+      res.status(500).json({ message: "Failed to edit message" });
+    }
+  });
+
+  // Delete message endpoint
+  app.delete("/api/messages/:messageId", requireAuth, async (req, res) => {
+    try {
+      const messageId = parseInt(req.params.messageId);
+      const { isDirectMessage } = req.body;
+      const userId = req.user!.id;
+
+      if (isDirectMessage) {
+        // Handle direct message deletion
+        const [message] = await db
+          .select()
+          .from(directMessages)
+          .where(eq(directMessages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user owns the message
+        if (message.fromUserId !== userId) {
+          return res.status(403).json({ message: "Unauthorized to delete this message" });
+        }
+
+        // Delete the message
+        await db
+          .delete(directMessages)
+          .where(eq(directMessages.id, messageId));
+
+        // Broadcast the deletion
+        ws.broadcast({
+          type: "message_deleted",
+          payload: {
+            messageId,
+            fromUserId: message.fromUserId,
+            toUserId: message.toUserId,
+          },
+        });
+
+        res.json({ message: "Message deleted successfully" });
+      } else {
+        // Handle channel message deletion
+        const [message] = await db
+          .select()
+          .from(messages)
+          .where(eq(messages.id, messageId))
+          .limit(1);
+
+        if (!message) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user owns the message
+        if (message.userId !== userId) {
+          return res.status(403).json({ message: "Unauthorized to delete this message" });
+        }
+
+        // Delete the message
+        await db
+          .delete(messages)
+          .where(eq(messages.id, messageId));
+
+        // Broadcast the deletion
+        ws.broadcast({
+          type: "message_deleted",
+          payload: {
+            messageId,
+            channelId: message.channelId,
+          },
+        });
+
+        res.json({ message: "Message deleted successfully" });
+      }
+    } catch (error) {
+      log(`[ERROR] Failed to delete message: ${error}`);
+      res.status(500).json({ message: "Failed to delete message" });
+    }
+  });
+
+  // Add these routes for direct messages
+  app.patch("/api/dm/:messageId", requireAuth, async (req, res) => {
+    req.body.isDirectMessage = true;
+    return app._router.handle(req, res, () => {});
+  });
+
+  app.delete("/api/dm/:messageId", requireAuth, async (req, res) => {
+    req.body.isDirectMessage = true;
+    return app._router.handle(req, res, () => {});
   });
 
   return httpServer;
