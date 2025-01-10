@@ -47,7 +47,7 @@ type ExtendedMessage = (
 ) & {
   user: User;
   isRead?: boolean;
-  reactions: MessageReactions;
+  reactions?: MessageReactions;
 };
 
 // Update the MessageActions component to handle reactions properly
@@ -72,9 +72,9 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
 
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       // Invalidate the messages query to refresh the reactions
-      queryClient.invalidateQueries({ queryKey: ["/api/channels", message.channelId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["messages", message.channelId] });
     },
   });
 
@@ -827,15 +827,38 @@ export default function MessageList({ channelId, userId }: Props) {
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
-                      {message.reactions && Object.entries(message.reactions).map(([emoji, userIds]) => (
-                        <button
-                          key={emoji}
-                          className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full mr-1"
-                          onClick={() => addReactionMutation.mutate(emoji)}
-                        >
-                          {emoji} <span className="opacity-50">{userIds.length}</span>
-                        </button>
-                      ))}
+                      {message.reactions && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Object.entries(message.reactions).map(([emoji, userIds]) => (
+                            <button
+                              key={emoji}
+                              onClick={() => {
+                                const addReactionMutation = useMutation({
+                                  mutationFn: async () => {
+                                    const response = await fetch(`/api/messages/${message.id}/react`, {
+                                      method: "POST",
+                                      headers: {
+                                        "Content-Type": "application/json",
+                                        Authorization: `Bearer ${token}`,
+                                      },
+                                      body: JSON.stringify({ emoji }),
+                                    });
+                                    if (!response.ok) throw new Error("Failed to add reaction");
+                                    return response.json();
+                                  },
+                                  onSuccess: () => {
+                                    queryClient.invalidateQueries({ queryKey: ["messages", message.channelId] });
+                                  },
+                                });
+                                addReactionMutation.mutate();
+                              }}
+                              className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full"
+                            >
+                              {emoji} <span className="opacity-50">{userIds.length}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <MessageActions message={message} />
                   </div>
@@ -862,7 +885,6 @@ export default function MessageList({ channelId, userId }: Props) {
           </div>
         )}
       </ScrollArea>
-
       <Separator />
       <div className="p-4">
         <MessageInput
