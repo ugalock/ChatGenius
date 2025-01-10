@@ -4,6 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useUser } from "@/hooks/use-user";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
+import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +24,7 @@ type FormData = z.infer<typeof profileSchema>;
 export default function ProfilePage() {
   const { user, token } = useUser();
   const { toast } = useToast();
+  const [_, setLocation] = useLocation();
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -65,10 +68,14 @@ export default function ProfilePage() {
         throw new Error(await response.text());
       }
 
+      const updatedUser = await response.json();
       toast({
         title: "Success",
         description: "Profile updated successfully",
       });
+
+      // Wait a bit before redirecting to ensure the toast is visible
+      setTimeout(() => setLocation("/"), 1500);
     } catch (error) {
       toast({
         title: "Error",
@@ -81,7 +88,15 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Card className="w-full max-w-md mx-4">
-        <CardHeader>
+        <CardHeader className="relative">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute left-4 top-4"
+            onClick={() => setLocation("/")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <CardTitle className="text-2xl text-center">Edit Profile</CardTitle>
         </CardHeader>
         <CardContent>
@@ -124,9 +139,23 @@ export default function ProfilePage() {
                 )}
               />
 
-              <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                Save Changes
-              </Button>
+              <div className="flex gap-4">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => setLocation("/")}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="flex-1" 
+                  disabled={form.formState.isSubmitting}
+                >
+                  Save Changes
+                </Button>
+              </div>
             </form>
           </Form>
         </CardContent>
