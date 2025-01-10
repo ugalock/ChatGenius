@@ -463,6 +463,7 @@ export function registerRoutes(app: Express): Server {
             userId: messages.userId,
             threadId: messages.threadId,
             reactions: messages.reactions,
+            attachments: messages.attachments,
             createdAt: messages.createdAt,
             updatedAt: messages.updatedAt,
             user: {
@@ -495,6 +496,7 @@ export function registerRoutes(app: Express): Server {
         const formattedMessages = channelMessages.map(msg => ({
           ...msg,
           reactions: msg.reactions || {},
+          attachments: msg.attachments || [],
         }));
 
         // If we fetched with 'before', we need to reverse the order
