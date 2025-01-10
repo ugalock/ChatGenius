@@ -4,7 +4,7 @@ import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { formatDistance } from "date-fns";
+import { format, formatDistance, isToday, isYesterday, isSameDay } from "date-fns";
 import { Search, Users, File } from "lucide-react";
 import type {
   Message,
@@ -14,11 +14,33 @@ import type {
   MessageRead,
 } from "@db/schema";
 import MessageInput from "./MessageInput";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { MessageSquare, Smile, MoreHorizontal } from "lucide-react";
 
-// Extend the base message types to include the user
-type ExtendedMessage = (Message | DirectMessage) & {
+// Define the structure for message reactions
+interface MessageReaction {
+  emoji: string;
+  userIds: number[];
+}
+
+interface MessageReactions {
+  [key: string]: number[]; // emoji -> array of user IDs who reacted
+}
+
+// Extend the base message types to include the user and thread support
+type ExtendedMessage = (
+  | (Message & { threadId: number | null })
+  | (DirectMessage & { threadId: number | null })
+) & {
   user: User;
   isRead?: boolean;
+  reactions?: MessageReactions;
 };
 
 type Props = {
@@ -38,6 +60,50 @@ interface MessagesResponse {
 }
 
 const MESSAGES_PER_PAGE = 1000;
+
+const DateHeader = ({ date }: { date: Date }) => {
+  let displayDate = "";
+  if (isToday(date)) {
+    displayDate = "Today";
+  } else if (isYesterday(date)) {
+    displayDate = "Yesterday";
+  } else {
+    displayDate = format(date, "MMMM d, yyyy");
+  }
+
+  return (
+    <div className="sticky top-2 z-10 flex justify-center my-6">
+      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
+        {displayDate}
+      </div>
+    </div>
+  );
+};
+
+// Update the MessageActions component to handle reactions properly
+const MessageActions = ({ message }: { message: ExtendedMessage }) => {
+  return (
+    <div className="opacity-0 group-hover:opacity-100 absolute right-4 top-0 flex items-center gap-1">
+      <Button variant="ghost" size="icon" className="h-8 w-8">
+        <Smile className="h-4 w-4" />
+      </Button>
+      <Button variant="ghost" size="icon" className="h-8 w-8">
+        <MessageSquare className="h-4 w-4" />
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem>Edit</DropdownMenuItem>
+          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+};
 
 export default function MessageList({ channelId, userId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -642,7 +708,7 @@ export default function MessageList({ channelId, userId }: Props) {
                   chatPartner.status === "online"
                     ? "bg-green-500"
                     : "bg-gray-500"
-                }`}
+                  }`}
               />
             </div>
           )}
@@ -675,37 +741,65 @@ export default function MessageList({ channelId, userId }: Props) {
                 new Date(previousMessage.createdAt!).getTime() >
                 300000;
 
+            // Add date header if date changes
+            const messageDate = new Date(message.createdAt!);
+            const previousDate = previousMessage
+              ? new Date(previousMessage.createdAt!)
+              : null;
+            const showDateHeader = !previousDate || !isSameDay(messageDate, previousDate);
+
             return (
-              <div
-                key={message.id}
-                className="group"
-                data-message-id={message.id}
-                data-user-id={message.user.id}
-              >
-                {showHeader && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <Avatar className="h-10 w-10">
-                      <AvatarImage src={message.user.avatar || undefined} />
-                      <AvatarFallback>
-                        {message.user.username[0].toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-semibold">
-                        {message.user.username}
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        {formatDistance(
-                          new Date(message.createdAt!),
-                          new Date(),
-                          { addSuffix: true },
-                        )}
-                      </span>
+              <div key={message.id}>
+                {showDateHeader && <DateHeader date={messageDate} />}
+                <div
+                  className="group relative"
+                  data-message-id={message.id}
+                  data-user-id={message.user.id}
+                >
+                  {showHeader && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={message.user.avatar || undefined} />
+                        <AvatarFallback>
+                          {message.user.username[0].toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-semibold">
+                          {message.user.username}
+                        </span>
+                        <span className="text-sm text-muted-foreground">
+                          {format(messageDate, "h:mm a")}
+                        </span>
+                      </div>
                     </div>
+                  )}
+                  <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
+                    <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
+                      <p className="text-foreground">{message.content}</p>
+                      {message.reactions && Object.entries(message.reactions).map(([emoji, userIds]) => (
+                        <button
+                          key={emoji}
+                          className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full"
+                        >
+                          {emoji} <span className="opacity-50">{userIds.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <MessageActions message={message} />
                   </div>
-                )}
-                <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
-                  <p className="text-gray-800">{message.content}</p>
+                  {message.threadId && (
+                    <div className="pl-12 mt-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <MessageSquare className="h-3 w-3 mr-1" />
+                        View thread
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

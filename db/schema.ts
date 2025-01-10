@@ -37,9 +37,9 @@ export const messages = pgTable("messages", {
     .references(() => users.id)
     .notNull(),
   channelId: integer("channel_id").references(() => channels.id),
-  threadId: integer("thread_id"),
+  threadId: integer("thread_id").references(() => messages.id),
   attachments: jsonb("attachments"),
-  reactions: jsonb("reactions"),
+  reactions: jsonb("reactions").$type<Record<string, number[]>>(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -91,8 +91,9 @@ export const directMessages = pgTable("direct_messages", {
   toUserId: integer("to_user_id")
     .references(() => users.id)
     .notNull(),
+  threadId: integer("thread_id").references(() => directMessages.id),
   attachments: jsonb("attachments"),
-  reactions: jsonb("reactions"),
+  reactions: jsonb("reactions").$type<Record<string, number[]>>(),
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -146,9 +147,29 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
     fields: [messages.threadId],
     references: [messages.id],
   }),
-  replies: many(messages),
+  replies: many(messages, {
+    relationName: "threadReplies",
+  }),
   reads: many(messageReads),
   unreadTracking: many(channelUnreads, { relationName: "lastReadMessage" }),
+}));
+
+export const directMessagesRelations = relations(directMessages, ({ one, many }) => ({
+  fromUser: one(users, {
+    fields: [directMessages.fromUserId],
+    references: [users.id],
+  }),
+  toUser: one(users, {
+    fields: [directMessages.toUserId],
+    references: [users.id],
+  }),
+  parentThread: one(directMessages, {
+    fields: [directMessages.threadId],
+    references: [directMessages.id],
+  }),
+  replies: many(directMessages, {
+    relationName: "dmThreadReplies",
+  }),
 }));
 
 export const channelUnreadsRelations = relations(channelUnreads, ({ one }) => ({
