@@ -24,6 +24,7 @@ type WSMessageType =
   | "unread_update"
   | "message_read"
   | "direct_message_read"
+  | "message_reaction"
   | "auth_check";
 
 interface WSMessage {

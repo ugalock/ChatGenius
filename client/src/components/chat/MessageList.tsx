@@ -1,10 +1,21 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useUser } from "@/hooks/use-user";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { format, formatDistance, isToday, isYesterday, isSameDay } from "date-fns";
+import {
+  format,
+  formatDistance,
+  isToday,
+  isYesterday,
+  isSameDay,
+} from "date-fns";
 import { Search, Users, File, ArrowLeft, MessageSquare } from "lucide-react";
 import type {
   Message,
@@ -26,7 +37,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { MessageSquare as MessageSquareIcon, Smile, MoreHorizontal } from "lucide-react";
+import {
+  MessageSquare as MessageSquareIcon,
+  Smile,
+  MoreHorizontal,
+} from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 
 // Update type definition for message reactions and thread support
@@ -54,7 +69,7 @@ type Props = {
   channelId: number | null;
   userId: number | null;
   threadId?: number | null;
-  onBackToChannel?: () => void;
+  threadStateChanged: (threadId: number | null | undefined) => void;
 };
 
 interface PageParam {
@@ -89,7 +104,13 @@ const DateHeader = ({ date }: { date: Date }) => {
   );
 };
 
-const MessageActions = ({ message }: { message: ExtendedMessage }) => {
+const MessageActions = ({
+  message,
+  replyCallback,
+}: {
+  message: ExtendedMessage;
+  replyCallback: (threadId: number | null | undefined) => void;
+}) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const { user: currentUser, token } = useUser();
   const queryClient = useQueryClient();
@@ -102,9 +123,11 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           emoji,
-          isDirectMessage: 'toUserId' in message 
+          isDirectMessage: "toUserId" in message,
+          toUserId: message?.toUserId,
+          fromUserId: message?.fromUserId,
         }),
         credentials: "include",
       });
@@ -117,22 +140,22 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
     },
     onSuccess: () => {
       // Invalidate the appropriate query based on message type and thread context
-      if ('channelId' in message && message.channelId) {
-        queryClient.invalidateQueries({ 
+      if ("channelId" in message && message.channelId) {
+        queryClient.invalidateQueries({
           queryKey: [
-            "/api/channels", 
-            message.channelId, 
-            "messages", 
-            message.threadId || undefined
-          ] 
+            "/api/channels",
+            message.channelId,
+            "messages",
+            message.threadId || undefined,
+          ],
         });
-      } else if ('toUserId' in message) {
-        queryClient.invalidateQueries({ 
+      } else if ("toUserId" in message) {
+        queryClient.invalidateQueries({
           queryKey: [
-            "/api/dm", 
-            message.toUserId, 
-            message.threadId || undefined
-          ] 
+            "/api/dm",
+            message.toUserId,
+            message.threadId || undefined,
+          ],
         });
       }
     },
@@ -159,7 +182,15 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
           />
         </PopoverContent>
       </Popover>
-      <Button variant="ghost" size="icon" className="h-8 w-8">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => {
+          replyCallback(message.id);
+          return true;
+        }}
+      >
         <MessageSquareIcon className="h-4 w-4" />
       </Button>
       <DropdownMenu>
@@ -170,14 +201,21 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem>Edit</DropdownMenuItem>
-          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+          <DropdownMenuItem className="text-destructive">
+            Delete
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
   );
 };
 
-export default function MessageList({ channelId, userId, threadId, onBackToChannel }: Props) {
+export default function MessageList({
+  channelId,
+  userId,
+  threadId,
+  threadStateChanged,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollableElementRef = useRef<HTMLDivElement | null>(null);
   const { user: currentUser, token } = useUser();
@@ -208,11 +246,14 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
     queryKey: ["/api/users", userId, "read-direct-messages"],
     queryFn: async () => {
       if (!userId) return [];
-      const response = await fetch(`/api/users/${userId}/read-direct-messages`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `/api/users/${userId}/read-direct-messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
       if (!response.ok) throw new Error("Failed to fetch read messages");
       return response.json();
     },
@@ -452,7 +493,12 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
 
   const updateLastRead = useCallback(
     async (messageId: number, cid: number | null, uid: number | null) => {
-      if (!messageId || processedMessagesRef.current.has(messageId) || !(cid || uid)) return;
+      if (
+        !messageId ||
+        processedMessagesRef.current.has(messageId) ||
+        !(cid || uid)
+      )
+        return;
 
       try {
         console.log(`[MessageTracking] Marking message ${messageId} as read`);
@@ -533,7 +579,6 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
         }
 
         if (entry.intersectionRatio >= 0.5 && messageId) {
-
           if (debounceTimeoutRef.current) {
             clearTimeout(debounceTimeoutRef.current);
           }
@@ -611,9 +656,7 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
             const messageId = parseInt(
               element.getAttribute("data-message-id") || "0",
             );
-            const uid = parseInt(
-              element.getAttribute("data-user-id") || "0",
-            );
+            const uid = parseInt(element.getAttribute("data-user-id") || "0");
 
             if (
               processedMessagesRef.current.has(messageId) ||
@@ -700,12 +743,15 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
           <Button
             variant="ghost"
             size="icon"
-            onClick={onBackToChannel}
+            onClick={() => {
+              threadStateChanged(null);
+              return true;
+            }}
             className="h-8 w-8"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span>Thread</span>
+          <span></span>
         </div>
       );
     }
@@ -728,7 +774,6 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
 
   const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
-
   return (
     <div className="h-full flex flex-col">
       <div className="bg-white border-b p-4 flex items-center justify-between">
@@ -746,13 +791,13 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
                   chatPartner.status === "online"
                     ? "bg-green-500"
                     : "bg-gray-500"
-                  }`}
+                }`}
               />
             </div>
           )}
           <div>{getMessageTitle()}</div>
         </div>
-        {!threadId && (
+        {(
           <div className="flex items-center space-x-4">
             <Search className="w-5 h-5 text-gray-500 cursor-pointer" />
             {!userId && (
@@ -783,7 +828,8 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
             const previousDate = previousMessage
               ? new Date(previousMessage.createdAt!)
               : null;
-            const showDateHeader = !previousDate || !isSameDay(messageDate, previousDate);
+            const showDateHeader =
+              !previousDate || !isSameDay(messageDate, previousDate);
 
             return (
               <div key={message.id}>
@@ -814,25 +860,36 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
-                      {message.reactions && Object.keys(message.reactions).length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {Object.entries(message.reactions).map(([emoji, userIds]) => {
-                            const hasReacted = userIds.includes(currentUser?.id || 0);
-                            return (
-                              <button
-                                key={emoji}
-                                className={`inline-flex items-center gap-1 text-xs ${
-                                  hasReacted ? 'bg-accent' : 'bg-background'
-                                } hover:bg-accent px-2 py-0.5 rounded-full`}
-                              >
-                                {emoji} <span className="opacity-50">{userIds.length}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {message.reactions &&
+                        Object.keys(message.reactions).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {Object.entries(message.reactions).map(
+                              ([emoji, userIds]) => {
+                                const hasReacted = userIds.includes(
+                                  currentUser?.id || 0,
+                                );
+                                return (
+                                  <button
+                                    key={emoji}
+                                    className={`inline-flex items-center gap-1 text-xs ${
+                                      hasReacted ? "bg-accent" : "bg-background"
+                                    } hover:bg-accent px-2 py-0.5 rounded-full`}
+                                  >
+                                    {emoji}{" "}
+                                    <span className="opacity-50">
+                                      {userIds.length}
+                                    </span>
+                                  </button>
+                                );
+                              },
+                            )}
+                          </div>
+                        )}
                     </div>
-                    <MessageActions message={message} />
+                    <MessageActions
+                      message={message}
+                      replyCallback={threadStateChanged}
+                    />
                   </div>
                   {!threadId && (message.replyCount || 0) > 0 && (
                     <div className="pl-12 mt-1">
@@ -841,22 +898,15 @@ export default function MessageList({ channelId, userId, threadId, onBackToChann
                         size="sm"
                         className="text-xs text-muted-foreground hover:text-foreground"
                         onClick={() => {
-                          // Use React Router or your navigation solution
-                          const baseUrl = userId 
-                            ? `/dm/${userId}` 
-                            : `/channels/${channelId}`;
-                          window.history.pushState(
-                            {},
-                            "",
-                            `${baseUrl}/thread/${message.id}`
-                          );
-                          if (onBackToChannel) {
-                            onBackToChannel();
+                          if (threadStateChanged) {
+                            threadStateChanged(message.id);
                           }
+                          return true;
                         }}
                       >
                         <MessageSquare className="h-3 w-3 mr-1" />
-                        {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
+                        {message.replyCount}{" "}
+                        {message.replyCount === 1 ? "reply" : "replies"}
                       </Button>
                     </div>
                   )}

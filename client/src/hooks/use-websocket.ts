@@ -96,6 +96,18 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
                 queryKey: ["/api/dm", data.payload.toUserId],
               });
               break;
+            case "message_reaction":
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.fromUserId],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.toUserId],
+              });
+              if (data.payload.channelId)
+                queryClient.invalidateQueries({
+                  queryKey: ["/api/channels", data.payload.channelId, "messages"],
+                });
+              break;
             case "presence":
               queryClient.invalidateQueries({
                 queryKey: ["/api/users"],

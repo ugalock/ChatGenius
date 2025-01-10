@@ -361,19 +361,58 @@ export function registerRoutes(app: Express): Server {
 
         const { before, after, limit, threadId } = queryResult.data;
         const channelId = parseInt(req.params.channelId);
+        console.log(channelId);
         const messageLimit = Math.min(parseInt(limit), 50);
 
-        // Ensure channelId is valid
-        const [channel] = await db
-          .select()
-          .from(channels)
-          .where(eq(channels.id, channelId))
-          .limit(1);
-
-        if (!channel) {
-          return res.status(404).json({ message: "Channel not found" });
+        let whereClause;
+        if (threadId) {
+          if (before) {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              or(
+                eq(messages.id, parseInt(threadId)),
+                eq(messages.threadId, parseInt(threadId))
+              ),
+              lt(messages.id, parseInt(before))
+            );
+          } else if (after) {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              or(
+                eq(messages.id, parseInt(threadId)),
+                eq(messages.threadId, parseInt(threadId))
+              ),
+              gt(messages.id, parseInt(after))
+            );
+          } else {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              or(
+                eq(messages.id, parseInt(threadId)),
+                eq(messages.threadId, parseInt(threadId))
+              )
+            );
+          }
+        } else {
+          if (before) {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              lt(messages.id, parseInt(before)),
+              sql`${messages.threadId} IS NULL`
+            );
+          } else if (after) {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              gt(messages.id, parseInt(after)),
+              sql`${messages.threadId} IS NULL`
+            );
+          } else {
+            whereClause = and(
+              eq(messages.channelId, channelId),
+              sql`${messages.threadId} IS NULL`
+            );
+          }
         }
-
         // Build base query
         const query = db
           .select({
@@ -393,43 +432,21 @@ export function registerRoutes(app: Express): Server {
             },
             replyCount: sql<number>`
               COALESCE(
-                CAST((
-                  SELECT COUNT(*)
-                  FROM ${messages} replies
-                  WHERE replies.thread_id = ${messages.id}
-                ) AS integer),
+                (
+                  SELECT COUNT(m.id)::integer
+                  FROM messages m
+                  WHERE m.thread_id = ${messages.id}
+                ),
                 0
               )
             `,
           })
           .from(messages)
           .innerJoin(users, eq(messages.userId, users.id))
-          .where(eq(messages.channelId, channelId));
-
-        // Add conditions to the query
-        let finalQuery = query;
-
-        if (threadId) {
-          finalQuery = finalQuery.where(
-            or(
-              eq(messages.id, parseInt(threadId)),
-              eq(messages.threadId, parseInt(threadId))
-            )
-          );
-        } else {
-          finalQuery = finalQuery.where(sql`${messages.threadId} IS NULL`);
-        }
-
-        if (before) {
-          finalQuery = finalQuery.where(lt(messages.id, parseInt(before)));
-        }
-
-        if (after) {
-          finalQuery = finalQuery.where(gt(messages.id, parseInt(after)));
-        }
+          .where(whereClause);
 
         // Execute query with order and limit
-        const channelMessages = await finalQuery
+        const channelMessages = await query
           .orderBy(before ? desc(messages.createdAt) : asc(messages.createdAt))
           .limit(messageLimit);
 
@@ -516,6 +533,64 @@ export function registerRoutes(app: Express): Server {
       const toUserId = parseInt(req.params.userId);
       const messageLimit = Math.min(parseInt(limit), 50);
 
+      let whereClause = or(
+          and(
+            eq(directMessages.fromUserId, req.user!.id),
+            eq(directMessages.toUserId, toUserId),
+          ),
+          and(
+            eq(directMessages.fromUserId, toUserId),
+            eq(directMessages.toUserId, req.user!.id),
+          ),
+        );
+      if (threadId) {
+        if (before) {
+          whereClause = and(
+            whereClause,
+            or(
+              eq(directMessages.id, parseInt(threadId)),
+              eq(directMessages.threadId, parseInt(threadId))
+            ),
+            lt(directMessages.id, parseInt(before))
+          );
+        } else if (after) {
+          whereClause = and(
+            whereClause,
+            or(
+              eq(directMessages.id, parseInt(threadId)),
+              eq(directMessages.threadId, parseInt(threadId))
+            ),
+            gt(directMessages.id, parseInt(after))
+          );
+        } else {
+          whereClause = and(
+            whereClause,
+            or(
+              eq(directMessages.id, parseInt(threadId)),
+              eq(directMessages.threadId, parseInt(threadId))
+            )
+          );
+        }
+      } else {
+        if (before) {
+          whereClause = and(
+            whereClause,
+            sql`${directMessages.threadId} IS NULL`,
+            lt(directMessages.id, parseInt(before))
+          );
+        } else if (after) {
+          whereClause = and(
+            whereClause,
+            sql`${directMessages.threadId} IS NULL`,
+            gt(directMessages.id, parseInt(after))
+          );
+        } else {
+          whereClause = and(
+            whereClause,
+            sql`${directMessages.threadId} IS NULL`
+          );
+        }
+      }
       let baseQuery = db
         .select({
           id: directMessages.id,
@@ -547,37 +622,7 @@ export function registerRoutes(app: Express): Server {
         })
         .from(directMessages)
         .innerJoin(users, eq(directMessages.fromUserId, users.id))
-        .where(
-          or(
-            and(
-              eq(directMessages.fromUserId, req.user!.id),
-              eq(directMessages.toUserId, toUserId),
-            ),
-            and(
-              eq(directMessages.fromUserId, toUserId),
-              eq(directMessages.toUserId, req.user!.id),
-            ),
-          ),
-        );
-
-      // Add thread filtering if threadId is provided
-      if (threadId) {
-        baseQuery = baseQuery.where(
-          or(
-            eq(directMessages.id, parseInt(threadId)),
-            eq(directMessages.threadId, parseInt(threadId))
-          )
-        );
-      } else {
-        baseQuery = baseQuery.where(sql`${directMessages.threadId} IS NULL`);
-      }
-
-      // Add pagination conditions
-      if (before) {
-        baseQuery = baseQuery.where(lt(directMessages.id, parseInt(before)));
-      } else if (after) {
-        baseQuery = baseQuery.where(gt(directMessages.id, parseInt(after)));
-      }
+        .where(whereClause);
 
       // Get messages ordered by creation time
       const DMs = await baseQuery
@@ -612,13 +657,14 @@ export function registerRoutes(app: Express): Server {
 
   app.post("/api/dm/:userId", requireAuth, async (req, res) => {
     try {
-      const { content } = req.body;
+      const { content, threadId } = req.body;
       const [message] = await db
         .insert(directMessages)
         .values({
           content,
           fromUserId: req.user!.id,
           toUserId: parseInt(req.params.userId),
+          threadId: threadId,
         })
         .returning();
 
@@ -797,7 +843,7 @@ export function registerRoutes(app: Express): Server {
     try {
       const messageId = parseInt(req.params.messageId);
       const result = reactionSchema.safeParse(req.body);
-      const { isDirectMessage } = req.body;
+      const { isDirectMessage, toUserId, fromUserId } = req.body;
 
       if (!result.success) {
         return res.status(400).json({
@@ -882,8 +928,11 @@ export function registerRoutes(app: Express): Server {
           messageId,
           reactions: updatedReactions,
           userId,
+          user: req.user,
           channelId: isDirectMessageType ? undefined : message.channelId,
           isDirectMessage: isDirectMessageType,
+          toUserId: toUserId,
+          fromUserId: fromUserId,
         },
       });
 

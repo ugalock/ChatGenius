@@ -15,18 +15,26 @@ export default function ChatPage() {
     null,
   );
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
   useWebSocket(user?.id, token);
 
   // When selecting a channel, clear any selected user
   const handleChannelSelect = (channelId: number) => {
     setSelectedChannelId(channelId);
     setSelectedUserId(null);
+    setSelectedThreadId(null);
   };
 
   // When selecting a user for DM, clear any selected channel
   const handleUserSelect = (userId: number) => {
     setSelectedUserId(userId);
     setSelectedChannelId(null);
+    setSelectedThreadId(null);
+  };
+
+  // When selecting a thread
+  const handleThreadSelect = (threadId?: number | null) => {
+    setSelectedThreadId(threadId ? threadId : null);
   };
 
   return (
@@ -51,7 +59,7 @@ export default function ChatPage() {
           </div>
         </ResizablePanel>
         <ResizablePanel defaultSize={60}>
-          <MessageList channelId={selectedChannelId} userId={selectedUserId} />
+          <MessageList channelId={selectedChannelId} userId={selectedUserId} threadId={selectedThreadId} threadStateChanged={handleThreadSelect} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
