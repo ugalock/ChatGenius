@@ -47,50 +47,13 @@ type ExtendedMessage = (
 ) & {
   user: User;
   isRead?: boolean;
-  reactions?: MessageReactions;
-};
-
-type Props = {
-  channelId: number | null;
-  userId: number | null;
-};
-
-interface PageParam {
-  before: string | null;
-  after: string | null;
-}
-
-interface MessagesResponse {
-  data: ExtendedMessage[];
-  nextCursor: string | null;
-  prevCursor: string | null;
-}
-
-const MESSAGES_PER_PAGE = 1000;
-
-const DateHeader = ({ date }: { date: Date }) => {
-  let displayDate = "";
-  if (isToday(date)) {
-    displayDate = "Today";
-  } else if (isYesterday(date)) {
-    displayDate = "Yesterday";
-  } else {
-    displayDate = format(date, "MMMM d, yyyy");
-  }
-
-  return (
-    <div className="sticky top-2 z-10 flex justify-center my-6">
-      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
-        {displayDate}
-      </div>
-    </div>
-  );
+  reactions: MessageReactions;
 };
 
 // Update the MessageActions component to handle reactions properly
 const MessageActions = ({ message }: { message: ExtendedMessage }) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const { token } = useUser();
+  const { user: currentUser, token } = useUser();
 
   const addReactionMutation = useMutation({
     mutationFn: async (emoji: string) => {
@@ -153,6 +116,44 @@ const MessageActions = ({ message }: { message: ExtendedMessage }) => {
     </div>
   );
 };
+
+type Props = {
+  channelId: number | null;
+  userId: number | null;
+};
+
+interface PageParam {
+  before: string | null;
+  after: string | null;
+}
+
+interface MessagesResponse {
+  data: ExtendedMessage[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+}
+
+const MESSAGES_PER_PAGE = 1000;
+
+const DateHeader = ({ date }: { date: Date }) => {
+  let displayDate = "";
+  if (isToday(date)) {
+    displayDate = "Today";
+  } else if (isYesterday(date)) {
+    displayDate = "Yesterday";
+  } else {
+    displayDate = format(date, "MMMM d, yyyy");
+  }
+
+  return (
+    <div className="sticky top-2 z-10 flex justify-center my-6">
+      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
+        {displayDate}
+      </div>
+    </div>
+  );
+};
+
 
 export default function MessageList({ channelId, userId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -830,6 +831,7 @@ export default function MessageList({ channelId, userId }: Props) {
                         <button
                           key={emoji}
                           className="inline-flex items-center gap-1 text-xs bg-background hover:bg-accent px-2 py-0.5 rounded-full mr-1"
+                          onClick={() => addReactionMutation.mutate(emoji)}
                         >
                           {emoji} <span className="opacity-50">{userIds.length}</span>
                         </button>

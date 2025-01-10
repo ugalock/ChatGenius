@@ -199,17 +199,17 @@ export const messageReadsRelations = relations(messageReads, ({ one }) => ({
   }),
 }));
 
-// Export schemas and types
-export const insertUserSchema = createInsertSchema(users);
-export const selectUserSchema = createSelectSchema(users);
-export const insertChannelSchema = createInsertSchema(channels);
-export const selectChannelSchema = createSelectSchema(channels);
-export const insertMessageSchema = createInsertSchema(messages);
-export const selectMessageSchema = createSelectSchema(messages);
-export const insertChannelUnreadSchema = createInsertSchema(channelUnreads);
-export const selectChannelUnreadSchema = createSelectSchema(channelUnreads);
-export const insertMessageReadSchema = createInsertSchema(messageReads);
-export const selectMessageReadSchema = createSelectSchema(messageReads);
+// Explicitly define the reaction schema for better type safety
+export const reactionSchema = z.record(z.string(), z.array(z.number()));
+
+// Update message schemas to include proper reaction typing
+export const insertMessageSchema = createInsertSchema(messages).extend({
+  reactions: reactionSchema.optional().default({}),
+});
+
+export const selectMessageSchema = createSelectSchema(messages).extend({
+  reactions: reactionSchema,
+});
 
 // Export types
 export type User = typeof users.$inferSelect;

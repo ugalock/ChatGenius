@@ -745,7 +745,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Initialize or update reactions
-      const currentReactions = (message.reactions as Record<string, number[]>) || {};
+      const currentReactions = message.reactions as Record<string, number[]> || {};
       const userIds = currentReactions[emoji] || [];
 
       // Toggle reaction: remove if user already reacted, add if not
