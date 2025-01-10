@@ -45,6 +45,13 @@ import {
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 import { File as FileIcon, Download } from "lucide-react";
 import type { Attachment } from "@db/schema";
+import {
+  Image as ImageIcon,
+  FileText,
+  Film,
+  Music,
+  Archive,
+} from "lucide-react";
 
 // Update type definition for message reactions and thread support
 interface MessageReaction {
@@ -863,30 +870,91 @@ export default function MessageList({
                   <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
                     <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
                       <p className="text-foreground">{message.content}</p>
-                      {message.attachments && message.attachments.length > 0 && (
-                        <div className="mt-2 space-y-1">
-                          {message.attachments.map((attachment, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center gap-2 bg-accent/30 p-2 rounded-md text-sm w-fit"
-                            >
-                              <FileIcon className="h-4 w-4 text-muted-foreground" />
-                              <span className="max-w-[200px] truncate">
-                                {attachment.fileName}
-                              </span>
-                              <a
-                                href={attachment.url}
-                                download
-                                className="flex items-center gap-1 text-primary hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Download className="h-4 w-4" />
-                                Download
-                              </a>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {message.attachments &&
+                        message.attachments.length > 0 && (
+                          <div className="mt-2 space-y-2">
+                            {message.attachments.map((attachment, index) => {
+                              const isImage = attachment.fileType.startsWith(
+                                "image/",
+                              );
+
+                              return (
+                                <div
+                                  key={index}
+                                  className="group relative"
+                                >
+                                  {isImage ? (
+                                    <div className="relative max-w-lg rounded-lg overflow-hidden">
+                                      <img
+                                        src={attachment.url}
+                                        alt={attachment.fileName}
+                                        className="max-w-full h-auto rounded-lg"
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                        <a
+                                          href={attachment.url}
+                                          download
+                                          className="flex items-center gap-2 bg-background/90 text-foreground px-3 py-2 rounded-md hover:bg-background/95 transition-colors"
+                                          onClick={(e) =>
+                                            e.stopPropagation()
+                                          }
+                                        >
+                                          <Download className="h-4 w-4" />
+                                          Download
+                                        </a>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-3 bg-accent/30 p-3 rounded-lg text-sm max-w-lg group-hover:bg-accent/40 transition-colors">
+                                      {/* File type icon */}
+                                      {attachment.fileType ===
+                                      "application/pdf" ? (
+                                        <FileText className="h-8 w-8 text-red-500" />
+                                      ) : attachment.fileType.startsWith(
+                                          "video/",
+                                        ) ? (
+                                        <Film className="h-8 w-8 text-blue-500" />
+                                      ) : attachment.fileType.startsWith(
+                                          "audio/",
+                                        ) ? (
+                                        <Music className="h-8 w-8 text-purple-500" />
+                                      ) : attachment.fileType.includes("zip") ||
+                                        attachment.fileType.includes("rar") ? (
+                                        <Archive className="h-8 w-8 text-yellow-500" />
+                                      ) : (
+                                        <FileIcon className="h-8 w-8 text-muted-foreground" />
+                                      )}
+
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-medium truncate">
+                                          {attachment.fileName}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {formatFileSize(
+                                            attachment.fileSize,
+                                          )}
+                                        </p>
+                                      </div>
+
+                                      <a
+                                        href={attachment.url}
+                                        download
+                                        className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <Download className="h-4 w-4" />
+                                        <span className="sr-only">
+                                          Download {attachment.fileName}
+                                        </span>
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       {message.reactions &&
                         Object.keys(message.reactions).length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
@@ -974,4 +1042,12 @@ function debounce<T extends (...args: any[]) => any>(
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
