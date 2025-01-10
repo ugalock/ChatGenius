@@ -28,6 +28,7 @@ export const users = pgTable("users", {
   username: text("username").unique().notNull(),
   password: text("password").notNull(),
   avatar: text("avatar"),
+  bio: text("bio"),
   status: text("status").default("offline"),
   createdAt: timestamp("created_at").defaultNow(),
 });

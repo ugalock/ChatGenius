@@ -1,6 +1,7 @@
 import { Settings, LogOut } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useUser } from "@/hooks/use-user";
+import { useLocation } from "wouter";
 
 const logout = () => {
   localStorage.removeItem("user-storage");
@@ -9,6 +10,8 @@ const logout = () => {
 
 export default function ProfileBar() {
   const { user } = useUser();
+  const [_, setLocation] = useLocation();
+
   return (
     <div className="mt-auto p-4 border-t border-gray-700 flex items-center">
       <div className="relative">
@@ -27,7 +30,10 @@ export default function ProfileBar() {
           {user?.username || "Current User"}
         </div>
       </div>
-      <Settings className="w-5 h-5 cursor-pointer hover:text-gray-400 mr-2" />
+      <Settings 
+        className="w-5 h-5 cursor-pointer hover:text-gray-400 mr-2" 
+        onClick={() => setLocation("/profile")}
+      />
       <LogOut
         className="w-5 h-5 cursor-pointer hover:text-gray-400"
         onClick={logout}

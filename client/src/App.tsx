@@ -2,6 +2,7 @@ import { Switch, Route } from "wouter";
 import { Loader2 } from "lucide-react";
 import AuthPage from "./pages/AuthPage";
 import ChatPage from "./pages/ChatPage";
+import ProfilePage from "./pages/ProfilePage";
 import { useUser } from "./hooks/use-user";
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
   return (
     <Switch>
       <Route path="/" component={ChatPage} />
+      <Route path="/profile" component={ProfilePage} />
     </Switch>
   );
 }
