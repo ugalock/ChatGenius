@@ -1063,6 +1063,15 @@ export default function MessageList({
           </div>
         </div>
       </ScrollArea>
+      <Separator />
+      <div className="p-4">
+        <MessageInput
+          channelId={channelId}
+          userId={userId}
+          threadId={threadId}
+          dmChatName={chatPartner?.username}
+        />
+      </div>
     </div>
   );
 }
