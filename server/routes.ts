@@ -403,7 +403,7 @@ export function registerRoutes(app: Express): Server {
 
         const { before, after, limit, threadId } = queryResult.data;
         const channelId = parseInt(req.params.channelId);
-        const messageLimit = Math.min(parseInt(limit), 50);
+        const messageLimit = Math.max(parseInt(limit), 50);
 
         let whereClause;
         if (threadId) {
@@ -615,7 +615,7 @@ export function registerRoutes(app: Express): Server {
 
       const { before, after, limit, threadId } = queryResult.data;
       const toUserId = parseInt(req.params.userId);
-      const messageLimit = Math.min(parseInt(limit), 50);
+      const messageLimit = Math.max(parseInt(limit), 50);
 
       let whereClause = or(
         and(
