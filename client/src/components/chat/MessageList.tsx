@@ -161,6 +161,64 @@ const MessageActions = ({
     },
   });
 
+  const deleteMessageMutation = useMutation({
+    mutationFn: async () => {
+      const url = "toUserId" in message
+        ? `/api/dm/${message.id}`
+        : `/api/messages/${message.id}`;
+
+      const response = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          isDirectMessage: "toUserId" in message,
+          toUserId: "toUserId" in message ? message.toUserId : undefined,
+          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
+        }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      if ("channelId" in message && message.channelId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/channels",
+            message.channelId,
+            "messages",
+            message.threadId || undefined,
+          ],
+        });
+      } else if ("toUserId" in message) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/dm",
+            message.toUserId,
+            message.threadId || undefined,
+          ],
+        });
+      }
+      toast({
+        title: "Success",
+        description: "Message deleted successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete message",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleEmojiSelect = (emojiData: EmojiClickData) => {
     addReactionMutation.mutate(emojiData.emoji);
     setShowEmojiPicker(false);
@@ -292,64 +350,6 @@ const MessageItem = ({
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to update message",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const deleteMessageMutation = useMutation({
-    mutationFn: async () => {
-      const url = "toUserId" in message
-        ? `/api/dm/${message.id}`
-        : `/api/messages/${message.id}`;
-
-      const response = await fetch(url, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          isDirectMessage: "toUserId" in message,
-          toUserId: "toUserId" in message ? message.toUserId : undefined,
-          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
-        }),
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      return response.json();
-    },
-    onSuccess: () => {
-      if ("channelId" in message && message.channelId) {
-        queryClient.invalidateQueries({
-          queryKey: [
-            "/api/channels",
-            message.channelId,
-            "messages",
-            message.threadId || undefined,
-          ],
-        });
-      } else if ("toUserId" in message) {
-        queryClient.invalidateQueries({
-          queryKey: [
-            "/api/dm",
-            message.toUserId,
-            message.threadId || undefined,
-          ],
-        });
-      }
-      toast({
-        title: "Success",
-        description: "Message deleted successfully",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete message",
         variant: "destructive",
       });
     },
@@ -1020,22 +1020,30 @@ export default function MessageList({
   });
 
   const getHeaderText = () => {
-    if (!channelId && !userId) {
+    if (threadId) {
       return (
-        <div className="h-full flex items-center justify-center text-muted-foreground">
-          Select a channel or user to start chatting
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              threadStateChanged(null);
+              return true;
+            }}
+            className="h-8 w-8"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <span></span>
         </div>
       );
     }
-
     if (userId && chatPartner) {
       return chatPartner.username;
     }
-
     if (channelId && channel) {
       return `#${channel.name}`;
     }
-
     return "";
   };
 
@@ -1052,14 +1060,40 @@ export default function MessageList({
       <ScrollArea className="flex-1">
         <div className="px-6 py-4">
           <div className="space-y-4">
-            {allMessages?.map((message: ExtendedMessage, i: number) => (
-              <MessageItem
-                key={message.id}
-                message={message}
-                previousMessage={allMessages[i - 1]}
-                threadStateChanged={threadStateChanged}
-              />
-            ))}
+            {allMessages?.map((message: ExtendedMessage, i: number) => {
+              const elements = [
+                <MessageItem
+                  key={message.id}
+                  message={message}
+                  previousMessage={allMessages[i - 1]}
+                  threadStateChanged={threadStateChanged}
+                />
+              ];
+
+              if (!threadId && (message.replyCount || 0) > 0) {
+                elements.push(
+                  <div key={`${message.id}-replies`} className="pl-12 mt-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        if (threadStateChanged) {
+                          threadStateChanged(message.id);
+                        }
+                        return true;
+                      }}
+                    >
+                      <MessageSquare className="h-3 w-3 mr-1" />
+                      {message.replyCount}{" "}
+                      {message.replyCount === 1 ? "reply" : "replies"}
+                    </Button>
+                  </div>
+                );
+              }
+
+              return elements;
+            })}                    
           </div>
         </div>
       </ScrollArea>
