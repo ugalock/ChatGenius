@@ -116,6 +116,126 @@ const MessageActions = ({
 
   const isOwner = currentUser?.id === message.user.id;
 
+  const addReactionMutation = useMutation({
+    mutationFn: async (emoji: string) => {
+      const response = await fetch(`/api/messages/${message.id}/react`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          emoji,
+          isDirectMessage: "toUserId" in message,
+          toUserId: "toUserId" in message ? message.toUserId : undefined,
+          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
+        }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to add reaction");
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      if ("channelId" in message && message.channelId) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/channels",
+            message.channelId,
+            "messages",
+            message.threadId || undefined,
+          ],
+        });
+      } else if ("toUserId" in message) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "/api/dm",
+            message.toUserId,
+            message.threadId || undefined,
+          ],
+        });
+      }
+    },
+  });
+
+  const handleEmojiSelect = (emojiData: EmojiClickData) => {
+    addReactionMutation.mutate(emojiData.emoji);
+    setShowEmojiPicker(false);
+  };
+
+  return (
+    <div className="opacity-0 group-hover:opacity-100 absolute right-4 top-0 flex items-center gap-1">
+      <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <Smile className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="p-0 border-none" align="end">
+          <EmojiPicker
+            onEmojiClick={handleEmojiSelect}
+            width={320}
+            height={400}
+          />
+        </PopoverContent>
+      </Popover>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => {
+          replyCallback(message.id);
+          return true;
+        }}
+      >
+        <MessageSquareIcon className="h-4 w-4" />
+      </Button>
+      {isOwner && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setIsEditing(true)}>
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={() => {
+                if (window.confirm("Are you sure you want to delete this message?")) {
+                  deleteMessageMutation.mutate();
+                }
+              }}
+            >
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+};
+
+const MessageItem = ({
+  message,
+  previousMessage,
+  threadStateChanged,
+}: {
+  message: ExtendedMessage;
+  previousMessage?: ExtendedMessage;
+  threadStateChanged: (threadId: number | null | undefined) => void;
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
+  const { user: currentUser, token } = useUser();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
   const editMessageMutation = useMutation({
     mutationFn: async (content: string) => {
       const url = "toUserId" in message
@@ -235,108 +355,119 @@ const MessageActions = ({
     },
   });
 
-  const addReactionMutation = useMutation({
-    mutationFn: async (emoji: string) => {
-      const response = await fetch(`/api/messages/${message.id}/react`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          emoji,
-          isDirectMessage: "toUserId" in message,
-          toUserId: "toUserId" in message ? message.toUserId : undefined,
-          fromUserId: "fromUserId" in message ? message.fromUserId : undefined,
-        }),
-        credentials: "include",
-      });
+  const showHeader =
+    !previousMessage ||
+    previousMessage.user.id !== message.user.id ||
+    new Date(message.createdAt!).getTime() -
+      new Date(previousMessage.createdAt!).getTime() >
+      300000;
 
-      if (!response.ok) {
-        throw new Error("Failed to add reaction");
-      }
+  const messageDate = new Date(message.createdAt!);
+  const showDateHeader =
+    !previousMessage ||
+    !isSameDay(messageDate, new Date(previousMessage.createdAt!));
 
-      return response.json();
-    },
-    onSuccess: () => {
-      // Invalidate the appropriate query based on message type and thread context
-      if ("channelId" in message && message.channelId) {
-        queryClient.invalidateQueries({
-          queryKey: [
-            "/api/channels",
-            message.channelId,
-            "messages",
-            message.threadId || undefined,
-          ],
-        });
-      } else if ("toUserId" in message) {
-        queryClient.invalidateQueries({
-          queryKey: [
-            "/api/dm",
-            message.toUserId,
-            message.threadId || undefined,
-          ],
-        });
-      }
-    },
-  });
-
-  const handleEmojiSelect = (emojiData: EmojiClickData) => {
-    addReactionMutation.mutate(emojiData.emoji);
-    setShowEmojiPicker(false);
+  const handleSaveEdit = () => {
+    if (editContent.trim() !== message.content) {
+      editMessageMutation.mutate(editContent);
+    }
+    setIsEditing(false);
   };
 
   return (
-    <div className="opacity-0 group-hover:opacity-100 absolute right-4 top-0 flex items-center gap-1">
-      <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <Smile className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="p-0 border-none" align="end">
-          <EmojiPicker
-            onEmojiClick={handleEmojiSelect}
-            width={320}
-            height={400}
-          />
-        </PopoverContent>
-      </Popover>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        onClick={() => {
-          replyCallback(message.id);
-          return true;
-        }}
+    <>
+      {showDateHeader && <DateHeader date={messageDate} />}
+      <div
+        className={`group relative flex gap-x-3 hover:bg-accent/50 rounded-lg -mx-2 px-2 ${
+          showHeader ? "mt-6" : "mt-1"
+        }`}
+        data-message-id={message.id}
+        data-user-id={"userId" in message ? message.userId : message.fromUserId}
       >
-        <MessageSquareIcon className="h-4 w-4" />
-      </Button>
-      {isOwner && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setIsEditing(true)}>
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive"
-              onSelect={() => {
-                if (window.confirm("Are you sure you want to delete this message?")) {
-                  deleteMessageMutation.mutate();
-                }
-              }}
-            >
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+        {showHeader && (
+          <Avatar className="h-8 w-8 mt-1">
+            <AvatarImage src={message.user.avatar || undefined} />
+            <AvatarFallback>
+              {message.user.username[0].toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+        )}
+        <div className={`flex-1 ${!showHeader ? "pl-11" : ""}`}>
+          {showHeader && (
+            <div className="flex items-center gap-x-2">
+              <div className="text-sm font-semibold">
+                {message.user.username}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {format(messageDate, "p")}
+              </div>
+            </div>
+          )}
+          <div className="space-y-1">
+            {isEditing ? (
+              <div className="flex items-center gap-2">
+                <Textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSaveEdit();
+                    }
+                    if (e.key === "Escape") {
+                      setIsEditing(false);
+                      setEditContent(message.content);
+                    }
+                  }}
+                />
+                <Button onClick={handleSaveEdit}>Save</Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setEditContent(message.content);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <div className="text-sm leading-loose">
+                {message.content}
+              </div>
+            )}
+          </div>
+          <MessageActions
+            message={message}
+            replyCallback={threadStateChanged}
+            isEditing={isEditing}
+            setIsEditing={setIsEditing}
+            editContent={editContent}
+            setEditContent={setEditContent}
+            handleSaveEdit={handleSaveEdit}
+          />
+        </div>
+      </div>
+    </>
+  );
+};
+
+const DateHeader = ({ date }: { date: Date }) => {
+  let displayDate = "";
+  if (isToday(date)) {
+    displayDate = "Today";
+  } else if (isYesterday(date)) {
+    displayDate = "Yesterday";
+  } else {
+    displayDate = format(date, "MMMM d, yyyy");
+  }
+
+  return (
+    <div className="sticky top-2 z-10 flex justify-center my-6">
+      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
+        {displayDate}
+      </div>
     </div>
   );
 };
@@ -361,26 +492,6 @@ interface MessagesResponse {
 
 const MESSAGES_PER_PAGE = 1000;
 
-const DateHeader = ({ date }: { date: Date }) => {
-  let displayDate = "";
-  if (isToday(date)) {
-    displayDate = "Today";
-  } else if (isYesterday(date)) {
-    displayDate = "Yesterday";
-  } else {
-    displayDate = format(date, "MMMM d, yyyy");
-  }
-
-  return (
-    <div className="sticky top-2 z-10 flex justify-center my-6">
-      <div className="bg-accent/80 backdrop-blur-sm text-accent-foreground px-3 py-1 rounded-full text-sm font-medium">
-        {displayDate}
-      </div>
-    </div>
-  );
-};
-
-
 export default function MessageList({
   channelId,
   userId,
@@ -397,6 +508,7 @@ export default function MessageList({
   const scrollRestorationTimeoutRef = useRef<NodeJS.Timeout>();
   const isInitialLoadRef = useRef(true);
   const loadingMoreRef = useRef(false);
+  const queryClient = useQueryClient();
 
   const { data: readMessages } = useQuery<MessageRead[]>({
     queryKey: ["/api/channels", channelId, "read-messages"],
@@ -623,10 +735,10 @@ export default function MessageList({
     const scrollableElement = scrollableElementRef.current;
     if (!scrollableElement) return;
     const storageKey = threadId ? "" : channelId
-    ? `chat-scroll-position-channel-${channelId}`
-    : userId
-    ? `chat-scroll-position-user-${userId}`
-    : "";
+      ? `chat-scroll-position-channel-${channelId}`
+      : userId
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (savedPosition && isInitialLoadRef.current) {
@@ -783,10 +895,10 @@ export default function MessageList({
   useEffect(() => {
     if (!(channelId || userId)) return;
     const storageKey = threadId ? "" : channelId
-    ? `chat-scroll-position-channel-${channelId}`
-    : userId
-    ? `chat-scroll-position-user-${userId}`
-    : "";
+      ? `chat-scroll-position-channel-${channelId}`
+      : userId
+      ? `chat-scroll-position-user-${userId}`
+      : "";
 
     return () => {
       if (scrollableElementRef.current) {
@@ -846,10 +958,10 @@ export default function MessageList({
 
   useEffect(() => {
     const storageKey = threadId ? "" : channelId
-    ? `chat-scroll-position-channel-${channelId}`
-    : userId
-    ? `chat-scroll-position-user-${userId}`
-    : "";
+      ? `chat-scroll-position-channel-${channelId}`
+      : userId
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     if (!storageKey) {
       return;
     }
@@ -864,10 +976,10 @@ export default function MessageList({
 
   useEffect(() => {
     const storageKey = threadId ? "" : channelId
-    ? `chat-scroll-position-channel-${channelId}`
-    : userId
-    ? `chat-scroll-position-user-${userId}`
-    : "";
+      ? `chat-scroll-position-channel-${channelId}`
+      : userId
+      ? `chat-scroll-position-user-${userId}`
+      : "";
     const savedPosition = localStorage.getItem(storageKey);
 
     if (scrollableElementRef.current && savedPosition) {
@@ -907,335 +1019,50 @@ export default function MessageList({
     enabled: !!channelId,
   });
 
-  const getMessageTitle = () => {
-    if (threadId) {
+  const getHeaderText = () => {
+    if (!channelId && !userId) {
       return (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              threadStateChanged(null);
-              return true;
-            }}
-            className="h-8 w-8"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <span></span>
+        <div className="h-full flex items-center justify-center text-muted-foreground">
+          Select a channel or user to start chatting
         </div>
       );
     }
+
     if (userId && chatPartner) {
       return chatPartner.username;
     }
+
     if (channelId && channel) {
       return `#${channel.name}`;
     }
+
     return "";
   };
 
-  if (!channelId && !userId) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground">
-        Select a channel or user to start chatting
-      </div>
-    );
-  }
 
   const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="bg-white border-b p-4 flex items-center justify-between">
-        <div className="flex items-center">
-          {userId && chatPartner && !threadId && (
-            <div className="relative">
-              <Avatar className="h-8 w-8 mr-2">
-                <AvatarImage src={chatPartner.avatar || undefined} />
-                <AvatarFallback>
-                  {chatPartner.username[0].toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div
-                className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
-                  chatPartner.status === "online"
-                    ? "bg-green-500"
-                    : "bg-gray-500"
-                }`}
+    <div ref={scrollRef} className="flex-1 flex flex-col h-full overflow-hidden">
+      {getHeaderText() && (
+        <div className="border-b px-6 py-2 h-14 flex items-center">
+          <h2 className="text-lg font-semibold">{getHeaderText()}</h2>
+        </div>
+      )}
+      <ScrollArea className="flex-1">
+        <div className="px-6 py-4">
+          <div className="space-y-4">
+            {allMessages?.map((message: ExtendedMessage, i: number) => (
+              <MessageItem
+                key={message.id}
+                message={message}
+                previousMessage={allMessages[i - 1]}
+                threadStateChanged={threadStateChanged}
               />
-            </div>
-          )}
-          <div>{getMessageTitle()}</div>
+            ))}
+          </div>
         </div>
-        {(
-          <div className="flex items-center space-x-4">
-            <Search className="w-5 h-5 text-gray-500 cursor-pointer" />
-            {!userId && (
-              <Users className="w-5 h-5 text-gray-500 cursor-pointer" />
-            )}
-            <File className="w-5 h-5 text-gray-500 cursor-pointer" />
-          </div>
-        )}
-      </div>
-
-      <ScrollArea id="scroll-container" ref={scrollRef} className="flex-1 p-4">
-        {isFetchingNextPage && (
-          <div className="text-center py-2 text-muted-foreground">
-            Loading older messages...
-          </div>
-        )}
-        <div className="space-y-4">
-          {allMessages.map((message: ExtendedMessage, i: number) => {
-            const [isEditing, setIsEditing] = useState(false);
-            const [editContent, setEditContent] = useState("");
-            const previousMessage = allMessages[i - 1];
-            const showHeader =
-              !previousMessage ||
-              previousMessage.user.id !== message.user.id ||
-              new Date(message.createdAt!).getTime() -
-                new Date(previousMessage.createdAt!).getTime() >
-                300000;
-
-            const messageDate = new Date(message.createdAt!);
-            const previousDate = previousMessage
-              ? new Date(previousMessage.createdAt!)
-              : null;
-            const showDateHeader =
-              !previousDate || !isSameDay(messageDate, previousDate);
-
-            const handleSaveEdit = () => {
-              if (editContent.trim() === "") return;
-              editMessageMutation.mutate(editContent.trim());
-            };
-
-            return (
-              <div key={message.id}>
-                {showDateHeader && <DateHeader date={messageDate} />}
-                <div
-                  className="group relative"
-                  data-message-id={message.id}
-                  data-user-id={"userId" in message ? message.userId : message.fromUserId}
-                >
-                  {showHeader && (
-                    <div className="flex items-start mb-2 gap-2">
-                      <Avatar className="h-8 w-8 mt-0.5">
-                        <AvatarImage src={message.user.avatar || undefined} />
-                        <AvatarFallback>
-                          {message.user.username[0].toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <span className="text-sm font-semibold">
-                          {message.user.username}
-                        </span>
-                        <span className="text-xs text-muted-foreground ml-2">
-                          {format(messageDate, "h:mm a")}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  <div className={`pl-12 ${!showHeader ? "mt-1" : ""}`}>
-                    <div className="group-hover:bg-accent/50 -ml-12 px-12 py-1 rounded-md">
-                      {isEditing ? (
-                        <div className="flex gap-2">
-                          <Textarea
-                            value={editContent}
-                            onChange={(e) => setEditContent(e.target.value)}
-                            className="min-h-[44px] flex-1"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                handleSaveEdit();
-                              } else if (e.key === "Escape") {
-                                setIsEditing(false);
-                                setEditContent(message.content);
-                              }
-                            }}
-                          />
-                          <div className="flex gap-1">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                setIsEditing(false);
-                                setEditContent(message.content);
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={handleSaveEdit}
-                            >
-                              Save
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-foreground">{message.content}</p>
-                      )}
-                      {message.attachments &&
-                        message.attachments.length > 0 && (
-                          <div className="mt-2 space-y-2">
-                            {message.attachments.map((attachment, index) => {
-                              const isImage = attachment.fileType.startsWith(
-                                "image/",
-                              );
-
-                              return (
-                                <div
-                                  key={index}
-                                  className="group relative"
-                                >
-                                  {isImage ? (
-                                    <div className="relative max-w-lg rounded-lg overflow-hidden">
-                                      <img
-                                        src={attachment.url}
-                                        alt={attachment.fileName}
-                                        className="max-w-full h-auto rounded-lg"
-                                        loading="lazy"
-                                      />
-                                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                        <a
-                                          href={attachment.url}
-                                          download
-                                          className="flex items-center gap-2 bg-background/90 text-foreground px-3 py-2 rounded-md hover:bg-background/95 transition-colors"
-                                          onClick={(e) =>
-                                            e.stopPropagation()
-                                          }
-                                        >
-                                          <Download className="h-4 w-4" />
-                                          Download
-                                        </a>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-3 bg-accent/30 p-3 rounded-lg text-sm max-w-lg group-hover:bg-accent/40 transition-colors">
-                                      {/* File type icon */}
-                                      {attachment.fileType ===
-                                      "application/pdf" ? (
-                                        <FileText className="h-8 w-8 text-red-500" />
-                                      ) : attachment.fileType.startsWith(
-                                          "video/",
-                                        ) ? (
-                                        <Film className="h-8 w-8 text-blue-500" />
-                                      ) : attachment.fileType.startsWith(
-                                          "audio/",
-                                        ) ? (
-                                        <Music className="h-8 w-8 text-purple-500" />
-                                      ) : attachment.fileType.includes("zip") ||
-                                        attachment.fileType.includes("rar") ? (
-                                        <Archive className="h-8 w-8 text-yellow-500" />
-                                      ) : (
-                                        <FileIcon className="h-8 w-8 text-muted-foreground" />
-                                      )}
-
-                                      <div className="flex-1 min-w-0">
-                                        <p className="font-medium truncate">
-                                          {attachment.fileName}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground">
-                                          {formatFileSize(
-                                            attachment.fileSize,
-                                          )}
-                                        </p>
-                                      </div>
-
-                                      <a
-                                        href={attachment.url}
-                                        download
-                                        className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <Download className="h-4 w-4" />
-                                        <span className="sr-only">
-                                          Download {attachment.fileName}
-                                        </span>
-                                      </a>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      {message.reactions &&
-                        Object.keys(message.reactions).length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {Object.entries(message.reactions).map(
-                              ([emoji, userIds]) => {
-                                const hasReacted = userIds.includes(
-                                  currentUser?.id || 0,
-                                );
-                                return (
-                                  <button
-                                    key={emoji}
-                                    className={`inline-flex items-center gap-1 text-xs ${
-                                      hasReacted ? "bg-accent" : "bg-background"
-                                    } hover:bg-accent px-2 py-0.5 rounded-full`}
-                                  >
-                                    {emoji}{" "}
-                                    <span className="opacity-50">
-                                      {userIds.length}
-                                    </span>
-                                  </button>
-                                );
-                              },
-                            )}
-                          </div>
-                        )}
-                    </div>
-                    <MessageActions
-                      message={message}
-                      replyCallback={threadStateChanged}
-                      isEditing={isEditing}
-                      setIsEditing={setIsEditing}
-                      editContent={editContent}
-                      setEditContent={setEditContent}
-                      handleSaveEdit={handleSaveEdit}
-                    />
-                  </div>
-                  {!threadId && (message.replyCount || 0) > 0 && (
-                    <div className="pl-12 mt-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          if (threadStateChanged) {
-                            threadStateChanged(message.id);
-                          }
-                          return true;
-                        }}
-                      >
-                        <MessageSquare className="h-3 w-3 mr-1" />
-                        {message.replyCount}{" "}
-                        {message.replyCount === 1 ? "reply" : "replies"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {isFetchingPreviousPage && (
-          <div className="text-center py-2 text-muted-foreground">
-            Loading newer messages...
-          </div>
-        )}
       </ScrollArea>
-      <Separator />
-      <div className="p-4">
-        <MessageInput
-          channelId={channelId}
-          userId={userId}
-          threadId={threadId}
-          dmChatName={chatPartner?.username}
-        />
-      </div>
     </div>
   );
 }
