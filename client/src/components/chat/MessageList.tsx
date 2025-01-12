@@ -25,6 +25,8 @@ import type {
   MessageRead,
 } from "@db/schema";
 import MessageInput from "./MessageInput";
+import { SearchBar } from "./SearchBar";
+import { SearchResult, SearchResults } from "./SearchResults";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -508,6 +510,8 @@ export default function MessageList({
   const scrollRestorationTimeoutRef = useRef<NodeJS.Timeout>();
   const isInitialLoadRef = useRef(true);
   const loadingMoreRef = useRef(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
   const queryClient = useQueryClient();
 
   const { data: readMessages } = useQuery<MessageRead[]>({
@@ -991,6 +995,22 @@ export default function MessageList({
     }
   }, [channelId, userId]);
 
+  useEffect(() => {
+    setShowSearch(!!(searchResults));
+  }, [searchResults]);
+
+  const handleSearchResultClick = (result: SearchResult) => {
+    // Navigate to the message
+    if (result.type === 'channel' && result.channelId) {
+      // Navigate to channel message
+      // You'll need to implement this navigation logic
+    } else if (result.type === 'dm') {
+      // Navigate to DM
+      // You'll need to implement this navigation logic
+    }
+    setShowSearch(false);
+  }
+
   const { data: chatPartner } = useQuery<User>({
     queryKey: ["/api/users", userId],
     queryFn: async () => {
@@ -1055,6 +1075,13 @@ export default function MessageList({
       {getHeaderText() && (
         <div className="border-b px-6 py-2 h-14 flex items-center">
           <h2 className="text-lg font-semibold">{getHeaderText()}</h2>
+          <div className="flex-1">
+            <SearchBar
+              channelId={channelId}
+              userId={userId}
+              onResultsChange={setSearchResults}
+            />
+          </div>
         </div>
       )}
       <ScrollArea className="flex-1">
@@ -1194,6 +1221,14 @@ export default function MessageList({
           dmChatName={chatPartner?.username}
         />
       </div>
+      {showSearch && (
+        <div className="w-80 border-l bg-background">
+          <SearchResults
+            results={searchResults}
+            onResultClick={handleSearchResultClick}
+          />
+        </div>
+      )}
     </div>
   );
 }

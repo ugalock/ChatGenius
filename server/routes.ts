@@ -15,7 +15,6 @@ import {
   channelMembers,
   directMessages,
   users,
-  channelUnreads,
   messageReads,
   type Attachment,
 } from "@db/schema";
@@ -333,60 +332,7 @@ export function registerRoutes(app: Express): Server {
       }
     },
   );
-
-  // Update last read message
-  app.post("/api/channels/:channelId/read", requireAuth, async (req, res) => {
-    try {
-      const { messageId } = req.body;
-      const channelId = parseInt(req.params.channelId);
-      const userId = req.user!.id;
-
-      // Verify the message exists and belongs to the channel
-      const [message] = await db
-        .select()
-        .from(messages)
-        .where(
-          and(eq(messages.id, messageId), eq(messages.channelId, channelId)),
-        )
-        .limit(1);
-
-      if (!message) {
-        return res.status(404).json({ message: "Message not found" });
-      }
-
-      // Update or insert the unread tracking record
-      await db
-        .insert(channelUnreads)
-        .values({
-          channelId,
-          userId,
-          lastReadMessageId: messageId,
-        })
-        .onConflictDoUpdate({
-          target: [channelUnreads.channelId, channelUnreads.userId],
-          set: {
-            lastReadMessageId: messageId,
-            updatedAt: new Date(),
-          },
-        });
-
-      // Broadcast unread update
-      ws.broadcast({
-        type: "unread_update",
-        payload: {
-          channelId,
-          messageId,
-          userId,
-        },
-      });
-
-      res.json({ message: "Last read message updated" });
-    } catch (error) {
-      log(`[ERROR] Failed to update last read message: ${error}`);
-      res.status(500).json({ message: "Failed to update last read message" });
-    }
-  });
-
+  
   // Messages with pagination and thread support
   app.get(
     "/api/channels/:channelId/messages",
@@ -559,6 +505,16 @@ export function registerRoutes(app: Express): Server {
             attachments: attachments.length > 0 ? attachments : null,
           })
           .returning();
+
+        if (threadId) {
+          await db
+          .insert(messageReads)
+          .values({
+            messageId: result.id,
+            userId: req.user!.id,
+          })
+          .onConflictDoNothing();
+        }
 
         // Get the full message with user details
         const [messageWithUser] = await db
@@ -773,6 +729,13 @@ export function registerRoutes(app: Express): Server {
             attachments: attachments.length > 0 ? attachments : null,
           })
           .returning();
+
+        if (threadId) {
+          await db
+          .update(directMessages)
+          .set({ isRead: true })
+          .where(eq(directMessages.id, message.id));
+        }
 
         // Get the full message with user details
         const [messageWithUser] = await db
@@ -1306,6 +1269,154 @@ export function registerRoutes(app: Express): Server {
   app.delete("/api/dm/:messageId", requireAuth, async (req, res) => {
     req.body.isDirectMessage = true;
     return app._router.handle(req, res, () => {});
+  });
+
+  // Search endpoint
+  app.get("/api/search", requireAuth, async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      const channelId = req.query.channelId ? parseInt(req.query.channelId as string) : null;
+      const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
+
+      if (!query) {
+        return res.status(400).json({ message: "Search query is required" });
+      }
+
+      // Build base search condition
+      const searchCondition = sql`(
+        content ILIKE ${`%${query}%`} OR
+        EXISTS (
+          SELECT 1 FROM jsonb_array_elements(COALESCE(attachments, '[]'::jsonb)) att
+          WHERE att->>'fileName' ILIKE ${`%${query}%`}
+        )
+      )`;
+
+      if (channelId) {
+        // Channel-specific search
+        const results = await db
+          .select({
+            id: messages.id,
+            content: messages.content,
+            channelId: messages.channelId,
+            threadId: messages.threadId,
+            attachments: messages.attachments,
+            createdAt: messages.createdAt,
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.userId, users.id))
+          .where(and(eq(messages.channelId, channelId), searchCondition))
+          .orderBy(desc(messages.createdAt));
+
+        res.json(results);
+
+      } else if (userId) {
+        // DM-specific search
+        const results = await db
+          .select({
+            id: directMessages.id,
+            content: directMessages.content,
+            fromUserId: directMessages.fromUserId,
+            toUserId: directMessages.toUserId,
+            threadId: directMessages.threadId,
+            attachments: directMessages.attachments,
+            createdAt: directMessages.createdAt,
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+          .from(directMessages)
+          .innerJoin(users, eq(directMessages.fromUserId, users.id))
+          .where(
+            and(
+              or(
+                and(
+                  eq(directMessages.fromUserId, req.user!.id),
+                  eq(directMessages.toUserId, userId)
+                ),
+                and(
+                  eq(directMessages.fromUserId, userId),
+                  eq(directMessages.toUserId, req.user!.id)
+                )
+              ),
+              searchCondition
+            )
+          )
+          .orderBy(desc(directMessages.createdAt));
+
+        res.json(results);
+
+      } else {
+        // Global search across all accessible messages
+        const [channelResults, dmResults] = await Promise.all([
+          // Search channel messages
+          db.select({
+            id: messages.id,
+            content: messages.content,
+            channelId: messages.channelId,
+            threadId: messages.threadId,
+            attachments: messages.attachments,
+            createdAt: messages.createdAt,
+            type: sql<'channel'>`'channel'`.as('type'),
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.userId, users.id))
+          .innerJoin(channelMembers, eq(messages.channelId, channelMembers.channelId))
+          .where(and(
+            eq(channelMembers.userId, req.user!.id),
+            searchCondition
+          ))
+          .orderBy(desc(messages.createdAt)),
+
+          // Search DMs
+          db.select({
+            id: directMessages.id,
+            content: directMessages.content,
+            fromUserId: directMessages.fromUserId,
+            toUserId: directMessages.toUserId,
+            threadId: directMessages.threadId,
+            attachments: directMessages.attachments,
+            createdAt: directMessages.createdAt,
+            type: sql<'dm'>`'dm'`.as('type'),
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+          .from(directMessages)
+          .innerJoin(users, eq(directMessages.fromUserId, users.id))
+          .where(and(
+            or(
+              eq(directMessages.fromUserId, req.user!.id),
+              eq(directMessages.toUserId, req.user!.id)
+            ),
+            searchCondition
+          ))
+          .orderBy(desc(directMessages.createdAt))
+        ]);
+
+        // Combine and sort results
+        const allResults = [...channelResults, ...dmResults]
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+        res.json(allResults);
+      }
+    } catch (error) {
+      log(`[ERROR] Search failed: ${error}`);
+      res.status(500).json({ message: "Search failed" });
+    }
   });
 
   return httpServer;
