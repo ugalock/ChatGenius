@@ -1,4 +1,3 @@
-// components/SearchBar.tsx
 import { useState, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -21,12 +20,10 @@ export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps
 
   // Implement debouncing for search term
   useEffect(() => {
-    // Create a timeout to update the debounced value
     const timeoutId = setTimeout(() => {
       setDebouncedSearch(searchTerm);
-    }, 300); // 300ms delay
+    }, 300);
 
-    // Cleanup timeout on every searchTerm change or component unmount
     return () => {
       clearTimeout(timeoutId);
     };
@@ -36,7 +33,7 @@ export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps
     queryKey: ['search', debouncedSearch, channelId, userId],
     queryFn: async () => {
       if (!debouncedSearch) return [];
-      
+
       const params = new URLSearchParams({
         q: debouncedSearch,
         ...(channelId && { channelId: channelId.toString() }),
@@ -48,7 +45,7 @@ export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps
           Authorization: `Bearer ${token}`,
         },
       });
-      
+
       if (!response.ok) throw new Error('Search failed');
       return response.json();
     },
@@ -71,32 +68,33 @@ export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative ml-auto">
       <Button
         variant="ghost"
         size="icon"
         onClick={toggleSearch}
-        className={isSearchVisible ? 'text-primary' : ''}
+        className={`${isSearchVisible ? 'text-primary' : ''} ml-auto`}
       >
         <Search className="h-4 w-4" />
       </Button>
-      
+
       {isSearchVisible && (
-        <div className="flex-1 transition-all duration-200">
-          <Input
-            placeholder="Search messages and files..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full"
-            // Auto focus when shown
-            autoFocus
-            // Handle Escape key to close search
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                toggleSearch();
-              }
-            }}
-          />
+        <div className="absolute right-0 top-full mt-2 w-80 z-50">
+          <div className="relative">
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg -m-2" />
+            <Input
+              placeholder="Search messages and files..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full relative"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  toggleSearch();
+                }
+              }}
+            />
+          </div>
         </div>
       )}
     </div>

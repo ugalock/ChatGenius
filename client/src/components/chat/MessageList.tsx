@@ -511,7 +511,7 @@ export default function MessageList({
   const isInitialLoadRef = useRef(true);
   const loadingMoreRef = useRef(false);
   const [showSearch, setShowSearch] = useState(false);
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const queryClient = useQueryClient();
 
   const { data: readMessages } = useQuery<MessageRead[]>({
@@ -999,17 +999,16 @@ export default function MessageList({
     setShowSearch(!!(searchResults));
   }, [searchResults]);
 
+  const handleSearchResults = (results: SearchResult[]) => {
+    setSearchResults(results);
+    setShowSearch(true);
+  };
+
   const handleSearchResultClick = (result: SearchResult) => {
-    // Navigate to the message
-    if (result.type === 'channel' && result.channelId) {
-      // Navigate to channel message
-      // You'll need to implement this navigation logic
-    } else if (result.type === 'dm') {
-      // Navigate to DM
-      // You'll need to implement this navigation logic
-    }
+    // Handle clicking a search result
+    console.log('Search result clicked:', result);
     setShowSearch(false);
-  }
+  };
 
   const { data: chatPartner } = useQuery<User>({
     queryKey: ["/api/users", userId],
@@ -1048,7 +1047,7 @@ export default function MessageList({
             size="icon"
             onClick={() => {
               threadStateChanged(null);
-              return true;
+                            return true;
             }}
             className="h-8 w-8"
           >
@@ -1071,7 +1070,7 @@ export default function MessageList({
   const allMessages = messagesData?.pages.flatMap((page) => page.data) || [];
 
   return (
-    <div ref={scrollRef} className="flex-1 flex flex-col h-full overflow-hidden">
+    <div ref={scrollRef} className="flex flex-col h-full overflow-hidden">
       {getHeaderText() && (
         <div className="border-b px-6 py-2 h-14 flex items-center">
           <h2 className="text-lg font-semibold">{getHeaderText()}</h2>
@@ -1079,7 +1078,7 @@ export default function MessageList({
             <SearchBar
               channelId={channelId}
               userId={userId}
-              onResultsChange={setSearchResults}
+              onResultsChange={handleSearchResults}
             />
           </div>
         </div>
@@ -1157,7 +1156,7 @@ export default function MessageList({
                               <div className="flex items-center gap-3 bg-accent/30 p-3 rounded-lg text-sm max-w-lg group-hover:bg-accent/40 transition-colors">
                                 {/* File type icon */}
                                 {attachment.fileType ===
-                                "application/pdf" ? (
+                                  "application/pdf" ? (
                                   <FileText className="h-8 w-8 text-red-500" />
                                 ) : attachment.fileType.startsWith(
                                     "video/",
@@ -1221,14 +1220,11 @@ export default function MessageList({
           dmChatName={chatPartner?.username}
         />
       </div>
-      {showSearch && (
-        <div className="w-80 border-l bg-background">
-          <SearchResults
-            results={searchResults}
-            onResultClick={handleSearchResultClick}
-          />
-        </div>
-      )}
+      <SearchResults
+        results={searchResults}
+        onResultClick={handleSearchResultClick}
+        isVisible={showSearch}
+      />
     </div>
   );
 }
