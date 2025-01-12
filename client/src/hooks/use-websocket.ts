@@ -62,8 +62,6 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
               queryClient.invalidateQueries({
                 queryKey: ["/api/channels", data.payload.channelId, "messages"],
               });
-              break;
-            case "unread_update":
               queryClient.invalidateQueries({
                 queryKey: ["/api/channels/all"],
               });

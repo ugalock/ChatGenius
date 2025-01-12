@@ -649,7 +649,7 @@ export default function MessageList({
       if (storageKey) {
         const maxScroll =
           scrollableElement.scrollHeight - scrollableElement.clientHeight;
-        console.log(maxScroll, position);
+        // console.log(maxScroll, position);
         if (maxScroll - position > 100) {
           localStorage.setItem(storageKey, position.toString());
           console.log(`[Scroll] Saved position ${position} for ${storageKey}`);
@@ -820,7 +820,7 @@ export default function MessageList({
             );
             processedMessagesRef.current.delete(messageId);
             updateLastRead(messageId, cid, uid);
-          }, 1000);
+          }, 300);
 
           retryTimeoutsRef.current.set(messageId, retryTimeout);
         } else {
@@ -860,19 +860,17 @@ export default function MessageList({
           entry.target.getAttribute("data-message-id") || "0",
         );
         const uid = parseInt(entry.target.getAttribute("data-user-id") || "0");
-
-        if (uid === currentUser?.id) {
+        if (
+          !messageId ||
+          processedMessagesRef.current.has(messageId) ||
+          !(channelId || uid) || uid === currentUser?.id
+        ) {
           return;
         }
 
-        if (entry.intersectionRatio >= 0.5 && messageId) {
-          if (debounceTimeoutRef.current) {
-            clearTimeout(debounceTimeoutRef.current);
-          }
-
-          debounceTimeoutRef.current = setTimeout(() => {
-            updateLastRead(messageId, channelId, userId);
-          }, 100);
+        if (entry.intersectionRatio >= 0.3 && messageId) {
+          // console.log(messageId);
+          updateLastRead(messageId, channelId, userId);
         }
       });
     };
@@ -897,7 +895,7 @@ export default function MessageList({
   }, [channelId, updateLastRead, userId]);
 
   useEffect(() => {
-    if (!(channelId || userId)) return;
+    if (threadId || !(channelId || userId)) return;
     const storageKey = threadId ? "" : channelId
       ? `chat-scroll-position-channel-${channelId}`
       : userId
@@ -996,15 +994,18 @@ export default function MessageList({
   }, [channelId, userId]);
 
   useEffect(() => {
-    setShowSearch(!!(searchResults));
+    setShowSearch(searchResults.length > 0);
   }, [searchResults]);
 
-  const handleSearchResults = (results: SearchResult[]) => {
-    setSearchResults(results);
-    setShowSearch(true);
-  };
-
   const handleSearchResultClick = (result: SearchResult) => {
+    // Navigate to the message
+    if (result.type === 'channel' && result.channelId) {
+      // Navigate to channel message
+      // You'll need to implement this navigation logic
+    } else if (result.type === 'dm') {
+      // Navigate to DM
+      // You'll need to implement this navigation logic
+    }
     // Handle clicking a search result
     console.log('Search result clicked:', result);
     setShowSearch(false);
@@ -1063,7 +1064,7 @@ export default function MessageList({
     if (channelId && channel) {
       return `#${channel.name}`;
     }
-    return "";
+    return "Select a channel or user";
   };
 
 
@@ -1074,13 +1075,15 @@ export default function MessageList({
       {getHeaderText() && (
         <div className="border-b px-6 py-2 h-14 flex items-center">
           <h2 className="text-lg font-semibold">{getHeaderText()}</h2>
+          {!threadId && (
           <div className="flex-1">
             <SearchBar
               channelId={channelId}
               userId={userId}
-              onResultsChange={handleSearchResults}
+              onResultsChange={setSearchResults}
             />
           </div>
+          )}
         </div>
       )}
       <ScrollArea className="flex-1">

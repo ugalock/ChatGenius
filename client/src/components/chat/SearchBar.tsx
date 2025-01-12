@@ -15,7 +15,7 @@ interface SearchBarProps {
 export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [isSearchVisible, setIsSearchVisible] = useState(false);
+  const [isSearchVisible, setIsSearchVisible] = useState(true);
   const { token } = useUser();
 
   // Implement debouncing for search term
@@ -58,45 +58,42 @@ export function SearchBar({ channelId, userId, onResultsChange }: SearchBarProps
   }, [searchResults, onResultsChange]);
 
   const toggleSearch = () => {
-    setIsSearchVisible(!isSearchVisible);
-    if (!isSearchVisible) {
-      // Reset search when hiding
-      setSearchTerm('');
-      setDebouncedSearch('');
-      onResultsChange([]);
-    }
+    setIsSearchVisible(isSearchVisible);
+    setSearchTerm('');
+    setDebouncedSearch('');
+    onResultsChange([]);
   };
 
   return (
-    <div className="relative ml-auto">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={toggleSearch}
-        className={`${isSearchVisible ? 'text-primary' : ''} ml-auto`}
-      >
-        <Search className="h-4 w-4" />
-      </Button>
-
-      {isSearchVisible && (
-        <div className="absolute right-0 top-full mt-2 w-80 z-50">
-          <div className="relative">
-            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg -m-2" />
-            <Input
-              placeholder="Search messages and files..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full relative"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  toggleSearch();
-                }
-              }}
-            />
-          </div>
+  <div className="relative ml-auto">
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={toggleSearch}
+      className={`${isSearchVisible ? 'text-primary' : ''} absolute right-80 top-1/2 -translate-y-1/2`}
+    >
+      <Search className="h-4 w-4" />
+    </Button>
+    
+    {isSearchVisible && (
+      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-80 z-50">
+        <div className="relative flex items-center">
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg -m-2" />
+          <Input
+            placeholder="Search messages and files..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full relative"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                toggleSearch();
+              }
+            }}
+          />
         </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+  </div>
+);
 }

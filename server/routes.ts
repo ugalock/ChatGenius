@@ -94,7 +94,7 @@ interface ReactionPayload extends BaseWSPayload {
 }
 
 interface WSMessage {
-  type: "message" | "direct_message" | "channel_created" | "unread_update" |
+  type: "message" | "direct_message" | "channel_created" |
         "message_read" | "direct_message_read" | "message_reaction" | "message_deleted";
   payload: MessagePayload | ReactionPayload | BaseWSPayload | {messageId: number; channelId?: number; fromUserId?: number; toUserId?: number;};
 }
