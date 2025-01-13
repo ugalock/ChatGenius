@@ -439,6 +439,31 @@ const MessageItem = ({
                 {message.content}
               </div>
             )}
+            {message.reactions &&
+              Object.keys(message.reactions).length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {Object.entries(message.reactions).map(
+                    ([emoji, userIds]) => {
+                      const hasReacted = userIds.includes(
+                        currentUser?.id || 0,
+                      );
+                      return (
+                        <button
+                          key={emoji}
+                          className={`inline-flex items-center gap-1 text-xs ${
+                            hasReacted ? "bg-accent" : "bg-background"
+                          } hover:bg-accent px-2 py-0.5 rounded-full`}
+                        >
+                          {emoji}{" "}
+                          <span className="opacity-50">
+                            {userIds.length}
+                          </span>
+                        </button>
+                      );
+                    },
+                  )}
+                </div>
+              )}
           </div>
           <MessageActions
             message={message}
