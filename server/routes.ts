@@ -5,6 +5,7 @@ import { createServer, type Server } from "http";
 import { setupWebSocket } from "./ws";
 import { requireAuth } from "./auth";
 import { db } from "@db";
+import { avatarService } from "@services";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -40,7 +41,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 50 * 1024 * 1024, // 50MB limit
   },
   fileFilter: (req, file, cb) => {
     // Allow images and PDFs
@@ -91,56 +92,6 @@ interface MessagePayload extends BaseWSPayload {
 
 interface ReactionPayload extends BaseWSPayload {
   reactions: Record<string, number[]>;
-}
-
-interface WSMessage {
-  type: "message" | "direct_message" | "channel_created" |
-        "message_read" | "direct_message_read" | "message_reaction" | "message_deleted";
-  payload: MessagePayload | ReactionPayload | BaseWSPayload | {messageId: number; channelId?: number; fromUserId?: number; toUserId?: number;};
-}
-
-// Fix the message creation transaction
-async function createMessage(data: {
-  content: string;
-  userId: number;
-  channelId: number;
-  threadId?: number | null;
-  attachments?: Attachment[] | null;
-}) {
-  const result = await db.transaction(async (tx) => {
-    const [message] = await tx
-      .insert(messages)
-      .values({
-        content: data.content,
-        userId: data.userId,
-        channelId: data.channelId,
-        threadId: data.threadId,
-        attachments: data.attachments,
-      })
-      .returning();
-
-    const [messageWithUser] = await tx
-      .select({
-        message: messages,
-        user: users,
-      })
-      .from(messages)
-      .innerJoin(users, eq(messages.userId, users.id))
-      .where(eq(messages.id, message.id))
-      .limit(1);
-
-    return {
-      ...messageWithUser.message,
-      user: {
-        id: messageWithUser.user.id,
-        username: messageWithUser.user.username,
-        avatar: messageWithUser.user.avatar,
-        status: messageWithUser.user.status,
-      },
-    };
-  });
-
-  return result;
 }
 
 export function registerRoutes(app: Express): Server {
@@ -506,6 +457,14 @@ export function registerRoutes(app: Express): Server {
           })
           .returning();
 
+        avatarService.indexUserMessage({
+          id: result.id,
+          userId: result.userId,
+          content: result.content,
+          createdAt: result.createdAt,
+          channelId: result.channelId,
+        });
+
         if (threadId) {
           await db
           .insert(messageReads)
@@ -547,6 +506,53 @@ export function registerRoutes(app: Express): Server {
             user: fullMessage.user,
           },
         });
+
+        const firstWord = content.split(" ")[0];
+        if (firstWord.startsWith("@")) {
+          const mentionedUsername = firstWord.substring(1);
+          const [mentionedUser] = await db.select().from(users).where(eq(users.username, mentionedUsername));
+          if (mentionedUser) {
+            const responseText = await avatarService.generateAvatarResponse(mentionedUser.id, result);
+            const [responseMessage] = await db
+              .insert(messages)
+              .values({
+                content: responseText.trim(),
+                userId: mentionedUser.id,
+                channelId,
+                threadId,
+                attachments: null,
+              })
+              .returning();
+
+            avatarService.indexUserMessage({
+              id: responseMessage.id,
+              userId: responseMessage.userId,
+              content: responseMessage.content,
+              createdAt: responseMessage.createdAt,
+              channelId: responseMessage.channelId,
+            });
+
+            if (threadId) {
+              await db
+              .insert(messageReads)
+              .values({
+                messageId: responseMessage.id,
+                userId: mentionedUser.id,
+              })
+              .onConflictDoNothing();
+            }
+
+            ws.broadcast({
+              type: "message",
+              payload: {
+                ...fullMessage,
+                channelId,
+                content: fullMessage.content,
+                user: fullMessage.user,
+              },
+            });
+          }
+        }
 
         res.json(fullMessage);
       } catch (error) {
@@ -727,15 +733,17 @@ export function registerRoutes(app: Express): Server {
             toUserId: parseInt(req.params.userId),
             threadId,
             attachments: attachments.length > 0 ? attachments : null,
+            isRead: threadId ? true : false,
           })
           .returning();
 
-        if (threadId) {
-          await db
-          .update(directMessages)
-          .set({ isRead: true })
-          .where(eq(directMessages.id, message.id));
-        }
+        avatarService.indexUserMessage({
+          id: message.id,
+          fromUserId: message.fromUserId,
+          toUserId: message.toUserId,
+          content: message.content,
+          createdAt: message.createdAt,
+        });
 
         // Get the full message with user details
         const [messageWithUser] = await db
@@ -763,6 +771,39 @@ export function registerRoutes(app: Express): Server {
           type: "direct_message",
           payload: fullMessage,
         });
+        
+        const firstWord = content.split(" ")[0];
+        if (firstWord.startsWith("@")) {
+          const mentionedUsername = firstWord.substring(1);
+          const [mentionedUser] = await db.select().from(users).where(eq(users.username, mentionedUsername));
+          if (mentionedUser) {
+            const responseText = await avatarService.generateAvatarResponse(mentionedUser.id, message);
+            const [responseMessage] = await db
+            .insert(directMessages)
+            .values({
+              content: responseText,
+              fromUserId: mentionedUser.id,
+              toUserId: req.user!.id,
+              threadId,
+              attachments: null,
+              isRead: threadId ? true : false,
+            })
+            .returning();
+
+            avatarService.indexUserMessage({
+              id: responseMessage.id,
+              fromUserId: responseMessage.fromUserId,
+              toUserId: responseMessage.toUserId,
+              content: responseMessage.content,
+              createdAt: responseMessage.createdAt,
+            });
+
+            ws.broadcast({
+              type: "direct_message",
+              payload: fullMessage,
+            });
+          }
+        }
 
         res.json(fullMessage);
       } catch (error) {
@@ -777,6 +818,15 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await db.select().from(users);
+      // If a user's AI profile is more than 3 days old it should be updated
+      for (const user of allUsers) {
+        const dateDiff = new Date().getTime() - user.aiUpdatedAt!.getTime();
+        if (dateDiff > 1000 * 60 * 60 * 24 * 3) {
+          const persona = await avatarService.createAvatarPersona(user.id);
+          await avatarService.configureAvatar(persona);
+          await db.update(users).set({ aiUpdatedAt: new Date() }).where(eq(users.id, user.id));
+        }
+      }
       const unreadCounts = await db
         .select({
           fromUserId: directMessages.fromUserId,

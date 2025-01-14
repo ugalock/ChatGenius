@@ -31,6 +31,7 @@ export const users = pgTable("users", {
   bio: text("bio"),
   status: text("status").default("offline"),
   createdAt: timestamp("created_at").defaultNow(),
+  aiUpdatedAt: timestamp("ai_updated_at").defaultNow(),
 });
 
 export const channels = pgTable("channels", {

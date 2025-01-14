@@ -281,6 +281,23 @@ const MessageActions = ({
   );
 };
 
+const MessageContent = ({ content }: {content: string}) => {
+  // Check if content starts with an @ mention
+  const firstWord = content.split(" ")[0];
+  if (firstWord.startsWith("@")) {
+    const restOfMessage = content.substring(firstWord.length);
+
+    return (
+      <div className="text-sm leading-loose">
+        <span className="text-blue-500">{firstWord}</span>
+        {restOfMessage}
+      </div>
+    );
+  }
+  // If no mention, render normally
+  return <div className="text-sm leading-loose">{content}</div>;
+};
+
 const MessageItem = ({
   message,
   previousMessage,
@@ -435,9 +452,7 @@ const MessageItem = ({
                 </Button>
               </div>
             ) : (
-              <div className="text-sm leading-loose">
-                {message.content}
-              </div>
+              <MessageContent content={message.content}/>
             )}
             {message.reactions &&
               Object.keys(message.reactions).length > 0 && (
