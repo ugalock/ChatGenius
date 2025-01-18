@@ -4,7 +4,6 @@ import { Paperclip, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useWebSocket } from "@/hooks/use-websocket";
 import { useUser } from "@/hooks/use-user";
 
 type Props = {
@@ -12,6 +11,7 @@ type Props = {
   userId: number | null;
   threadId?: number | null;
   dmChatName: string | undefined;
+  sendMessage: (type: string, payload: any) => void;
 };
 
 interface FilePreview {
@@ -20,15 +20,14 @@ interface FilePreview {
   type: string;
 }
 
-export default function MessageInput({ channelId, userId, threadId, dmChatName }: Props) {
+export default function MessageInput({ channelId, userId, threadId, dmChatName, sendMessage }: Props) {
   const [content, setContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<FilePreview[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const { toast } = useToast();
-  const { user, token } = useUser();
-  const { sendMessage } = useWebSocket(user?.id, token);
+  const { token } = useUser();
   const queryClient = useQueryClient();
 
   const formatFileSize = (bytes: number) => {
@@ -191,7 +190,7 @@ export default function MessageInput({ channelId, userId, threadId, dmChatName }
           ref={fileInputRef}
           className="hidden"
           multiple
-          accept="image/*,application/pdf"
+          accept="image/*,audio/*,video/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
           onChange={handleFileChange}
         />
         <Button

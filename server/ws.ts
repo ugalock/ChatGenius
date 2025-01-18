@@ -21,7 +21,7 @@ type WSMessageType =
   | "presence"
   | "error"
   | "channel_created"
-  | "unread_update"
+  | "message_deleted"
   | "message_read"
   | "direct_message_read"
   | "message_reaction"

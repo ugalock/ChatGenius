@@ -16,7 +16,7 @@ import {
   isYesterday,
   isSameDay,
 } from "date-fns";
-import { Search, Users, File, ArrowLeft, MessageSquare } from "lucide-react";
+import { Search, Users, File as FileIcon, ArrowLeft, MessageSquare, Download, CircleHelp } from "lucide-react";
 import type {
   Message,
   User,
@@ -45,7 +45,6 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
-import { File as FileIcon, Download } from "lucide-react";
 import type { Attachment } from "@db/schema";
 import {
   Image as ImageIcon,
@@ -519,6 +518,7 @@ type Props = {
   userId: number | null;
   threadId?: number | null;
   threadStateChanged: (threadId: number | null | undefined) => void;
+  sendMessage: (type: string, payload: any) => void;
 };
 
 interface PageParam {
@@ -539,6 +539,7 @@ export default function MessageList({
   userId,
   threadId,
   threadStateChanged,
+  sendMessage,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollableElementRef = useRef<HTMLDivElement | null>(null);
@@ -552,7 +553,7 @@ export default function MessageList({
   const loadingMoreRef = useRef(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const queryClient = useQueryClient();
+  const [loadingSummary, setLoadingSummary] = useState(false);
 
   const { data: readMessages } = useQuery<MessageRead[]>({
     queryKey: ["/api/channels", channelId, "read-messages"],
@@ -586,6 +587,15 @@ export default function MessageList({
     },
     enabled: !!userId,
   });
+
+  async function attachmentSummary(messageId: number, attachmentIdx: number) {
+    const response = await fetch(`/api/messages/${messageId}/attachments/${attachmentIdx}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.json();
+  }
 
   useEffect(() => {
     if (readMessages) {
@@ -1138,28 +1148,6 @@ export default function MessageList({
                   threadStateChanged={threadStateChanged}
                 />
               ];
-
-              if (!threadId && (message.replyCount || 0) > 0) {
-                elements.push(
-                  <div key={`${message.id}-replies`} className="pl-12 mt-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() => {
-                        if (threadStateChanged) {
-                          threadStateChanged(message.id);
-                        }
-                        return true;
-                      }}
-                    >
-                      <MessageSquare className="h-3 w-3 mr-1" />
-                      {message.replyCount}{" "}
-                      {message.replyCount === 1 ? "reply" : "replies"}
-                    </Button>
-                  </div>
-                );
-              }
               if (message.attachments && message.attachments.length > 0) {
                 let el = (
                     <div className="mt-2 space-y-2">
@@ -1193,6 +1181,43 @@ export default function MessageList({
                                     <Download className="h-4 w-4" />
                                     Download
                                   </a>
+                                  <Button
+                                    className="flex items-center gap-2 bg-background/90 text-foreground px-3 py-2 rounded-md hover:bg-background/95 transition-colors ml-2"
+                                    title="Summarize"
+                                    disabled={loadingSummary}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      setLoadingSummary(true);
+                                      try {
+                                        await attachmentSummary(message.id, index);
+                                        threadStateChanged(message.id);
+                                      } finally {
+                                        setLoadingSummary(false);
+                                      }
+                                      return true;
+                                    }}
+                                  >
+                                    {loadingSummary ? (
+                                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="4"
+                                          fill="none"
+                                        />
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <CircleHelp className="h-4 w-4" />
+                                    )}
+                                  </Button>
                                 </div>
                               </div>
                             ) : (
@@ -1238,6 +1263,43 @@ export default function MessageList({
                                     Download {attachment.fileName}
                                   </span>
                                 </a>
+                                  <button
+                                    className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+                                    title="Summarize"
+                                    disabled={loadingSummary}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      setLoadingSummary(true);
+                                      try {
+                                        await attachmentSummary(message.id, index);
+                                        threadStateChanged(message.id);
+                                      } finally {
+                                        setLoadingSummary(false);
+                                      }
+                                      return true;
+                                    }}
+                                  >
+                                    {loadingSummary ? (
+                                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="4"
+                                          fill="none"
+                                        />
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <CircleHelp className="h-4 w-4" />
+                                    )}
+                                  </button>
                               </div>
                             )}
                           </div>
@@ -1247,7 +1309,27 @@ export default function MessageList({
                   );
                 elements.push(el);
               }
-              
+              if (!threadId && (message.replyCount || 0) > 0) {
+                elements.push(
+                  <div key={`${message.id}-replies`} className="pl-12 mt-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        if (threadStateChanged) {
+                          threadStateChanged(message.id);
+                        }
+                        return true;
+                      }}
+                    >
+                      <MessageSquare className="h-3 w-3 mr-1" />
+                      {message.replyCount}{" "}
+                      {message.replyCount === 1 ? "reply" : "replies"}
+                    </Button>
+                  </div>
+                );
+              }
 
               return elements;
             })}                    
@@ -1261,6 +1343,7 @@ export default function MessageList({
           userId={userId}
           threadId={threadId}
           dmChatName={chatPartner?.username}
+          sendMessage={sendMessage}
         />
       </div>
       <SearchResults

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 const authSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
+  username: z.string().min(2, "Username must be at least 2 characters"),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 

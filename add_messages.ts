@@ -448,4 +448,19 @@ async function seedAvatars() {
   console.log('Avatar Response:', response);
 }
 
-await seedAvatars();
+// await seedAvatars();
+
+// await avatarService.deleteAllAttachments();
+
+async function fixMessages() {
+  const allMessages = await db.select().from(messages);
+  for (const message of allMessages) {
+    await avatarService.indexUserMessage(message);
+  }
+  const allDMs = await db.select().from(directMessages);
+  for (const message of allDMs) {
+    await avatarService.indexUserMessage(message);
+  }
+}
+
+await fixMessages();

@@ -7,6 +7,7 @@ import {
   timestamp,
   jsonb,
   unique,
+  PgColumn,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -32,6 +33,7 @@ export const users = pgTable("users", {
   status: text("status").default("offline"),
   createdAt: timestamp("created_at").defaultNow(),
   aiUpdatedAt: timestamp("ai_updated_at").defaultNow(),
+  useAiResponse: boolean("use_ai_response").default(false),
 });
 
 export const channels = pgTable("channels", {
@@ -50,7 +52,7 @@ export const messages = pgTable("messages", {
     .references(() => users.id)
     .notNull(),
   channelId: integer("channel_id").references(() => channels.id),
-  threadId: integer("thread_id").references(() => messages.id),
+  threadId: integer("thread_id").references(() : PgColumn => messages.id),
   attachments: jsonb("attachments").$type<Attachment[]>(),
   reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   createdAt: timestamp("created_at").defaultNow(),
@@ -104,7 +106,7 @@ export const directMessages = pgTable("direct_messages", {
   toUserId: integer("to_user_id")
     .references(() => users.id)
     .notNull(),
-  threadId: integer("thread_id").references(() => directMessages.id),
+  threadId: integer("thread_id").references(() : PgColumn => directMessages.id),
   attachments: jsonb("attachments").$type<Attachment[]>(),
   reactions: jsonb("reactions").$type<Record<string, number[]>>().default({}),
   isRead: boolean("is_read").default(false),

@@ -11,30 +11,63 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
 const profileSchema = z.object({
   bio: z.string().max(500, "Bio must be less than 500 characters"),
   avatar: z.string().optional(),
+  personalityTraits: z.array(z.string()).default([]),
+  responseStyle: z.string().max(1000, "Response style must be less than 1000 characters"),
+  writingStyle: z.string().max(1000, "Writing style must be less than 1000 characters"),
+  useAiResponse: z.boolean().default(false),
 });
 
 type FormData = z.infer<typeof profileSchema>;
 
 export default function ProfilePage() {
-  const { user, token } = useUser();
+  const { user, token, updateProfile } = useUser();
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [traits, setTraits] = useState<string[]>(
+    user?.avatarConfig?.personalityTraits ? 
+    user.avatarConfig.personalityTraits : 
+    []
+  );
 
   const form = useForm<FormData>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
       bio: user?.bio || "",
       avatar: user?.avatar || "",
+      personalityTraits: traits ? traits :user?.avatarConfig?.personalityTraits ? 
+        user.avatarConfig.personalityTraits : 
+        [],
+      responseStyle: user?.avatarConfig?.responseStyle || "",
+      writingStyle: user?.avatarConfig?.writingStyle || "",
+      useAiResponse: user?.useAiResponse || false,
     },
   });
+
+  const addTrait = () => {
+    setTraits([...traits, ""]);
+  };
+
+  const removeTrait = (index: number) => {
+    const newTraits = traits.filter((_, i) => i !== index);
+    setTraits(newTraits);
+    form.setValue("personalityTraits", newTraits);
+  };
+
+  const updateTrait = (index: number, value: string) => {
+    const newTraits = [...traits];
+    newTraits[index] = value;
+    setTraits(newTraits);
+    form.setValue("personalityTraits", newTraits);
+  };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -56,20 +89,13 @@ export default function ProfilePage() {
       if (avatarFile) {
         formData.append("avatar", avatarFile);
       }
+      console.log(traits);
+      formData.append("personalityTraits", JSON.stringify(traits));
+      formData.append("responseStyle", data.responseStyle);
+      formData.append("writingStyle", data.writingStyle);
+      formData.append("useAiResponse", data.useAiResponse.toString());
 
-      const response = await fetch("/api/users/profile", {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const updatedUser = await response.json();
+      await updateProfile(formData, token!);
       toast({
         title: "Success",
         description: "Profile updated successfully",
@@ -103,6 +129,28 @@ export default function ProfilePage() {
         <CardContent>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              <FormField
+                control={form.control}
+                name="useAiResponse"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">Auto-Response</FormLabel>
+                      <FormMessage />
+                      <div className="text-sm text-muted-foreground">
+                        Allow your AI to automatically respond to messages
+                      </div>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              
               <div className="flex flex-col items-center space-y-4">
                 <Avatar className="h-24 w-24">
                   {previewUrl ? (
@@ -136,6 +184,71 @@ export default function ProfilePage() {
                     <FormControl>
                       <Textarea
                         placeholder="Tell us about yourself..."
+                        className="resize-none"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="space-y-2">
+                <FormLabel>Personality Traits</FormLabel>
+                {traits.map((trait, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      value={trait}
+                      onChange={(e) => updateTrait(index, e.target.value)}
+                      placeholder="Enter a personality trait"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => removeTrait(index)}
+                    >
+                      -
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={addTrait}
+                >
+                  + Add Trait
+                </Button>
+              </div>
+
+              <FormField
+                control={form.control}
+                name="responseStyle"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Response Style</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="How should your AI respond?"
+                        className="resize-none"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="writingStyle"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Writing Style</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="What writing style should your AI use?"
                         className="resize-none"
                         {...field}
                       />

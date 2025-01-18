@@ -1,4 +1,4 @@
-import { eq, and, or, desc, asc, sql, lt, gt } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, lt, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
@@ -7,8 +7,8 @@ import { requireAuth } from "./auth";
 import { db } from "@db";
 import { avatarService } from "@services";
 import multer from "multer";
-import path from "path";
-import fs from "fs";
+import * as path from "path";
+import * as fs from "fs";
 import express from "express";
 import {
   channels,
@@ -18,6 +18,8 @@ import {
   users,
   messageReads,
   type Attachment,
+  type DirectMessage,
+  type Message,
 } from "@db/schema";
 import { log } from "./vite";
 
@@ -43,14 +45,14 @@ const upload = multer({
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB limit
   },
-  fileFilter: (req, file, cb) => {
-    // Allow images and PDFs
-    if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf") {
-      cb(null, true);
-    } else {
-      cb(null, false);
-    }
-  },
+  // fileFilter: (req, file, cb) => {
+  //   // Allow images and PDFs
+  //   if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf") {
+  //     cb(null, true);
+  //   } else {
+  //     cb(null, false);
+  //   }
+  // },
 });
 
 // Channel creation validation schema
@@ -103,7 +105,7 @@ export function registerRoutes(app: Express): Server {
 
   // Protected API routes - must be authenticated
   app.use("/api/channels", requireAuth);
-  app.use("/api/users", requireAuth);
+  app.use("/api/user", requireAuth);
 
   // Channels
   app.get("/api/channels/all", requireAuth, async (req, res) => {
@@ -455,15 +457,9 @@ export function registerRoutes(app: Express): Server {
             threadId,
             attachments: attachments.length > 0 ? attachments : null,
           })
-          .returning();
+          .returning() as Message[];
 
-        avatarService.indexUserMessage({
-          id: result.id,
-          userId: result.userId,
-          content: result.content,
-          createdAt: result.createdAt,
-          channelId: result.channelId,
-        });
+        await avatarService.indexUserMessage(result);
 
         if (threadId) {
           await db
@@ -511,7 +507,7 @@ export function registerRoutes(app: Express): Server {
         if (firstWord.startsWith("@")) {
           const mentionedUsername = firstWord.substring(1);
           const [mentionedUser] = await db.select().from(users).where(eq(users.username, mentionedUsername));
-          if (mentionedUser) {
+          if (mentionedUser && mentionedUser.useAiResponse) {
             const responseText = await avatarService.generateAvatarResponse(mentionedUser.id, result);
             const [responseMessage] = await db
               .insert(messages)
@@ -522,15 +518,9 @@ export function registerRoutes(app: Express): Server {
                 threadId,
                 attachments: null,
               })
-              .returning();
+              .returning() as Message[];
 
-            avatarService.indexUserMessage({
-              id: responseMessage.id,
-              userId: responseMessage.userId,
-              content: responseMessage.content,
-              createdAt: responseMessage.createdAt,
-              channelId: responseMessage.channelId,
-            });
+            await avatarService.indexUserMessage(responseMessage);
 
             if (threadId) {
               await db
@@ -735,15 +725,9 @@ export function registerRoutes(app: Express): Server {
             attachments: attachments.length > 0 ? attachments : null,
             isRead: threadId ? true : false,
           })
-          .returning();
+          .returning() as DirectMessage[];
 
-        avatarService.indexUserMessage({
-          id: message.id,
-          fromUserId: message.fromUserId,
-          toUserId: message.toUserId,
-          content: message.content,
-          createdAt: message.createdAt,
-        });
+        await avatarService.indexUserMessage(message);
 
         // Get the full message with user details
         const [messageWithUser] = await db
@@ -772,37 +756,27 @@ export function registerRoutes(app: Express): Server {
           payload: fullMessage,
         });
         
-        const firstWord = content.split(" ")[0];
-        if (firstWord.startsWith("@")) {
-          const mentionedUsername = firstWord.substring(1);
-          const [mentionedUser] = await db.select().from(users).where(eq(users.username, mentionedUsername));
-          if (mentionedUser) {
-            const responseText = await avatarService.generateAvatarResponse(mentionedUser.id, message);
-            const [responseMessage] = await db
-            .insert(directMessages)
-            .values({
-              content: responseText,
-              fromUserId: mentionedUser.id,
-              toUserId: req.user!.id,
-              threadId,
-              attachments: null,
-              isRead: threadId ? true : false,
-            })
-            .returning();
+        const [mentionedUser] = await db.select().from(users).where(eq(users.id, message.toUserId));
+        if (mentionedUser && mentionedUser.useAiResponse) {
+          const responseText = await avatarService.generateAvatarResponse(mentionedUser.id, message);
+          const [responseMessage] = await db
+          .insert(directMessages)
+          .values({
+            content: responseText,
+            fromUserId: mentionedUser.id,
+            toUserId: req.user!.id,
+            threadId,
+            attachments: null,
+            isRead: threadId ? true : false,
+          })
+          .returning() as DirectMessage[];
 
-            avatarService.indexUserMessage({
-              id: responseMessage.id,
-              fromUserId: responseMessage.fromUserId,
-              toUserId: responseMessage.toUserId,
-              content: responseMessage.content,
-              createdAt: responseMessage.createdAt,
-            });
+          await avatarService.indexUserMessage(responseMessage);
 
-            ws.broadcast({
-              type: "direct_message",
-              payload: fullMessage,
-            });
-          }
+          ws.broadcast({
+            type: "direct_message",
+            payload: fullMessage,
+          });
         }
 
         res.json(fullMessage);
@@ -819,14 +793,14 @@ export function registerRoutes(app: Express): Server {
     try {
       const allUsers = await db.select().from(users);
       // If a user's AI profile is more than 3 days old it should be updated
-      for (const user of allUsers) {
-        const dateDiff = new Date().getTime() - user.aiUpdatedAt!.getTime();
-        if (dateDiff > 1000 * 60 * 60 * 24 * 3) {
-          const persona = await avatarService.createAvatarPersona(user.id);
-          await avatarService.configureAvatar(persona);
-          await db.update(users).set({ aiUpdatedAt: new Date() }).where(eq(users.id, user.id));
-        }
-      }
+      // for (const user of allUsers) {
+      //   const dateDiff = new Date().getTime() - user.aiUpdatedAt!.getTime();
+      //   if (dateDiff > 1000 * 60 * 60 * 24 * 3) {
+      //     const persona = await avatarService.createAvatarPersona(user.id);
+      //     await avatarService.configureAvatar(persona);
+      //     await db.update(users).set({ aiUpdatedAt: new Date() }).where(eq(users.id, user.id));
+      //   }
+      // }
       const unreadCounts = await db
         .select({
           fromUserId: directMessages.fromUserId,
@@ -1050,7 +1024,7 @@ export function registerRoutes(app: Express): Server {
           reactions: updatedReactions,
           userId,
           user: req.user,
-          channelId: isDirectMessageType ? undefined : message.channelId,
+          channelId: "channelId" in message ? message.channelId! : undefined,
           isDirectMessage: isDirectMessageType,
           toUserId: toUserId,
           fromUserId: fromUserId,
@@ -1068,16 +1042,19 @@ export function registerRoutes(app: Express): Server {
   app.patch("/api/users/profile", requireAuth, upload.single("avatar"), async (req, res) => {
     try {
       const userId = req.user!.id;
-      const { bio } = req.body;
+      const { bio, personalityTraits, responseStyle, writingStyle, useAiResponse } = req.body;
       const avatarFile = req.file;
 
       // Prepare update data
-      const updateData: { bio?: string; avatar?: string } = {};
+      const updateData: { bio?: string; avatar?: string; useAiResponse?: boolean } = {};
       if (bio !== undefined) {
         updateData.bio = bio;
       }
       if (avatarFile) {
         updateData.avatar = `/uploads/${avatarFile.filename}`;
+      }
+      if (useAiResponse !== undefined) {
+        updateData.useAiResponse = useAiResponse === "true";
       }
 
       // Update user profile
@@ -1086,10 +1063,19 @@ export function registerRoutes(app: Express): Server {
         .set(updateData)
         .where(eq(users.id, userId))
         .returning();
-
       // Remove password from response
       const { password, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
+
+      const currentConfig = await avatarService.getAvatarConfig(userId);
+      if (currentConfig.personalityTraits !== personalityTraits || currentConfig.responseStyle !== responseStyle || currentConfig.writingStyle !== writingStyle) {
+        // Update avatar config
+        await avatarService.updateAvatarConfig(userId, JSON.parse(personalityTraits), responseStyle, writingStyle);
+        await db.update(users).set({ aiUpdatedAt: new Date() }).where(eq(users.id, userId));
+        res.json({ avatarConfig: await avatarService.getAvatarConfig(userId), ...userWithoutPassword });
+      } else {
+        res.json({ avatarConfig: currentConfig, ...userWithoutPassword });
+      }
+
     } catch (error) {
       console.error("Error updating profile:", error);
       res.status(500).json({ message: "Failed to update profile" });
@@ -1217,7 +1203,7 @@ export function registerRoutes(app: Express): Server {
           type: "message",
           payload: {
             ...fullMessage,
-            channelId: message.channelId,
+            channelId: message.channelId!,
             content: fullMessage.content,
             user: fullMessage.user,
           },
@@ -1238,9 +1224,10 @@ export function registerRoutes(app: Express): Server {
       const { isDirectMessage } = req.body;
       const userId = req.user!.id;
 
+      let message : Message | DirectMessage;
       if (isDirectMessage) {
         // Handle direct message deletion
-        const [message] = await db
+        [message] = await db
           .select()
           .from(directMessages)
           .where(eq(directMessages.id, messageId))
@@ -1269,11 +1256,9 @@ export function registerRoutes(app: Express): Server {
             toUserId: message.toUserId,
           },
         });
-
-        res.json({ message: "Message deleted successfully" });
       } else {
         // Handle channel message deletion
-        const [message] = await db
+        [message] = await db
           .select()
           .from(messages)
           .where(eq(messages.id, messageId))
@@ -1288,6 +1273,10 @@ export function registerRoutes(app: Express): Server {
           return res.status(403).json({ message: "Unauthorized to delete this message" });
         }
 
+        await db
+          .delete(messageReads)
+          .where(eq(messageReads.messageId, messageId));
+
         // Delete the message
         await db
           .delete(messages)
@@ -1298,12 +1287,22 @@ export function registerRoutes(app: Express): Server {
           type: "message_deleted",
           payload: {
             messageId,
-            channelId: message.channelId,
+            channelId: message.channelId!,
           },
         });
-
-        res.json({ message: "Message deleted successfully" });
       }
+      if (message) {
+        // Delete any attachments from the server
+        const attachments = message.attachments || [];
+        for (const attachment of attachments) {
+          const filePath = path.join(process.cwd(), attachment.url);
+          await fs.promises.unlink(filePath);
+        }
+        await avatarService.deleteUserMessage(message);
+      }
+      
+      res.json({ message: "Message deleted successfully" });
+
     } catch (error) {
       log(`[ERROR] Failed to delete message: ${error}`);
       res.status(500).json({ message: "Failed to delete message" });
@@ -1321,15 +1320,203 @@ export function registerRoutes(app: Express): Server {
     return app._router.handle(req, res, () => {});
   });
 
-  // Search endpoint
-  app.get("/api/search", requireAuth, async (req, res) => {
-    try {
-      const query = req.query.q as string;
-      const channelId = req.query.channelId ? parseInt(req.query.channelId as string) : null;
-      const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
+  app.get("/api/messages/:messageId/attachments/:attachmentIdx", requireAuth, async (req, res) => {
+    const messageId = parseInt(req.params.messageId);
+    const attachmentIdx = parseInt(req.params.attachmentIdx);
+    let message : Message | DirectMessage;
+    let isDirectMessage = false;
+    [message] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1) as Message[];
+    if (!message) {
+      [message] = await db
+        .select()
+        .from(directMessages)
+        .where(eq(directMessages.id, messageId))
+        .limit(1) as DirectMessage[];
+      isDirectMessage = true;
+    }
+    if (!message) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+    const attachment = message.attachments![attachmentIdx];
+    const summary = await avatarService.attachmentSummary(message, attachment);
+    const content = `${isDirectMessage ? "[ @ai ] " : ""}Here is a summary of ${attachment.fileName}:
+    ${summary}`;
+    if (!isDirectMessage) {
+      // Insert the message
+      const [result] = await db
+        .insert(messages)
+        .values({
+          content: content,
+          userId: 3,
+          channelId: "channelId" in message ? message.channelId : null,
+          threadId: message.id,
+          attachments: null,
+        })
+        .returning() as Message[];
 
+      await avatarService.indexUserMessage(result);
+
+      await db
+        .insert(messageReads)
+        .values({
+          messageId: result.id,
+          userId: req.user!.id,
+        })
+        .onConflictDoNothing();
+
+      // Get the full message with user details
+      const [messageWithUser] = await db
+        .select({
+          message: messages,
+          user: users,
+        })
+        .from(messages)
+        .innerJoin(users, eq(messages.userId, users.id))
+        .where(eq(messages.id, result.id))
+        .limit(1);
+
+      const fullMessage = {
+        ...messageWithUser.message,
+        user: {
+          id: messageWithUser.user.id,
+          username: messageWithUser.user.username,
+          avatar: messageWithUser.user.avatar,
+          status: messageWithUser.user.status,
+        },
+      }; 
+
+      // Send message through WebSocket
+      ws.broadcast({
+        type: "message",
+        payload: {
+          ...fullMessage,
+          channelId: "channelId" in message ? message.channelId! : undefined,
+          content: fullMessage.content,
+          user: fullMessage.user,
+        },
+      });
+    } else if ("fromUserId" in message) {
+      // Insert the direct message
+      const [result] = await db
+        .insert(directMessages)
+        .values({
+          content: content,
+          fromUserId: message.fromUserId,
+          toUserId: message.toUserId,
+          threadId: message.id,
+          attachments: null,
+          isRead: true,
+        })
+        .returning() as DirectMessage[];
+
+      await avatarService.indexUserMessage(result);
+
+      // Get the full message with user details
+      const [messageWithUser] = await db
+        .select({
+          message: directMessages,
+          user: users,
+        })
+        .from(directMessages)
+        .innerJoin(users, eq(directMessages.fromUserId, users.id))
+        .where(eq(directMessages.id, result.id))
+        .limit(1);
+
+      const fullMessage = {
+        ...messageWithUser.message,
+        user: {
+          id: messageWithUser.user.id,
+          username: messageWithUser.user.username,
+          avatar: messageWithUser.user.avatar,
+          status: messageWithUser.user.status,
+        },
+      };
+
+      // Send direct message through WebSocket
+      ws.broadcast({
+        type: "direct_message",
+        payload: fullMessage,
+      });
+    }
+    res.json({ message: "Success" });
+  });
+
+  // Search endpoint
+  app.post("/api/search", requireAuth, async (req, res) => {
+    try {
+      const query = req.body.searchTerm;
       if (!query) {
         return res.status(400).json({ message: "Search query is required" });
+      }
+      const channelId = req.body.channelId ? req.body.channelId : null;
+      const userId = req.body.userId ? req.body.userId : null;
+      const searchOptions = req.body.searchOptions ? req.body.searchOptions : [];
+      // console.log("searchOptions", searchOptions);
+
+      if (searchOptions) {
+        const { msg_ids, dm_ids } = await avatarService.search(query, {channelId, fromUserId: req.user!.id, toUserId: userId, fileTypes: searchOptions});
+        const [channelResults, dmResults] = await Promise.all([
+          // Search channel messages
+          db.select({
+            id: messages.id,
+            content: messages.content,
+            channelId: messages.channelId,
+            threadId: messages.threadId,
+            attachments: messages.attachments,
+            createdAt: messages.createdAt,
+            type: sql<'channel'>`'channel'`.as('type'),
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+            .from(messages)
+            .innerJoin(users, eq(messages.userId, users.id))
+            .innerJoin(channelMembers, eq(messages.channelId, channelMembers.channelId))
+            .where(and(
+              eq(channelMembers.userId, req.user!.id),
+              inArray(messages.id, msg_ids)
+            ))
+            .orderBy(desc(messages.createdAt)),
+
+          // Search DMs
+          db.select({
+            id: directMessages.id,
+            content: directMessages.content,
+            fromUserId: directMessages.fromUserId,
+            toUserId: directMessages.toUserId,
+            threadId: directMessages.threadId,
+            attachments: directMessages.attachments,
+            createdAt: directMessages.createdAt,
+            type: sql<'dm'>`'dm'`.as('type'),
+            user: {
+              id: users.id,
+              username: users.username,
+              avatar: users.avatar,
+            },
+          })
+            .from(directMessages)
+            .innerJoin(users, eq(directMessages.fromUserId, users.id))
+            .where(and(
+              or(
+                eq(directMessages.fromUserId, req.user!.id),
+                eq(directMessages.toUserId, req.user!.id)
+              ),
+              inArray(directMessages.id, dm_ids)
+            ))
+            .orderBy(desc(directMessages.createdAt))
+        ]);
+
+        // Combine and sort results
+        const allResults = [...channelResults, ...dmResults]
+          .sort((a, b) => b.createdAt!.getTime() - a.createdAt!.getTime());
+
+        return res.json(allResults);
       }
 
       // Build base search condition
@@ -1459,7 +1646,7 @@ export function registerRoutes(app: Express): Server {
 
         // Combine and sort results
         const allResults = [...channelResults, ...dmResults]
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          .sort((a, b) => b.createdAt!.getTime() - a.createdAt!.getTime());
 
         res.json(allResults);
       }

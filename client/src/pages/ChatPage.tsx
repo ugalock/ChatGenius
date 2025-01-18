@@ -16,7 +16,7 @@ export default function ChatPage() {
   );
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
-  useWebSocket(user?.id, token);
+  const { sendMessage } = useWebSocket(user?.id, token);
 
   // When selecting a channel, clear any selected user
   const handleChannelSelect = (channelId: number) => {
@@ -59,7 +59,7 @@ export default function ChatPage() {
           </div>
         </ResizablePanel>
         <ResizablePanel defaultSize={60}>
-          <MessageList channelId={selectedChannelId} userId={selectedUserId} threadId={selectedThreadId} threadStateChanged={handleThreadSelect} />
+          <MessageList channelId={selectedChannelId} userId={selectedUserId} threadId={selectedThreadId} threadStateChanged={handleThreadSelect} sendMessage={sendMessage} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

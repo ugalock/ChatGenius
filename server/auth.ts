@@ -5,6 +5,7 @@ import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { users, type SelectUser } from "@db/schema";
 import { db } from "@db";
+import { avatarService } from "@services";
 import { eq } from "drizzle-orm";
 import { log } from "./vite";
 import jwt from "jsonwebtoken";
@@ -37,7 +38,7 @@ declare global {
 // JWT Configuration
 const JWT_SECRET =
   process.env.JWT_SECRET || process.env.REPL_ID || "chat-genius-secret";
-const JWT_EXPIRES_IN = "30d";
+const JWT_EXPIRES_IN = "1d";
 
 function generateJWT(userId: number): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -106,9 +107,10 @@ export function setupAuth(app: Express) {
 
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { username, password } = req.body;
+      const username = req.body.username;
+      const pw = req.body.password;
 
-      if (!username || !password) {
+      if (!username || !pw) {
         return res.status(400).send("Username and password are required");
       }
 
@@ -123,7 +125,7 @@ export function setupAuth(app: Express) {
         return res.status(400).send("Username already exists");
       }
 
-      const hashedPassword = await crypto.hash(password);
+      const hashedPassword = await crypto.hash(pw);
       const [newUser] = await db
         .insert(users)
         .values({
@@ -134,12 +136,20 @@ export function setupAuth(app: Express) {
 
       log(`[AUTH] Registration successful: ${username}`);
 
+      if (!newUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Don't send password hash
+      const { password, ...userWithoutPassword } = newUser;
+      const response = { avatarConfig: await avatarService.getAvatarConfig(newUser.id), ...userWithoutPassword };
+
       // Generate JWT token
       const token = generateJWT(newUser.id);
 
       return res.json({
         message: "Registration successful",
-        user: { id: newUser.id, username: newUser.username },
+        user: response,
         token,
       });
     } catch (error) {
@@ -151,7 +161,7 @@ export function setupAuth(app: Express) {
   app.post("/api/login", (req, res, next) => {
     passport.authenticate(
       "local",
-      (err: any, user: Express.User, info: IVerifyOptions) => {
+      async (err: any, user: Express.User, info: IVerifyOptions) => {
         if (err) {
           log(`[AUTH] Login error: ${err}`);
           return next(err);
@@ -162,13 +172,27 @@ export function setupAuth(app: Express) {
           return res.status(400).send(info.message ?? "Login failed");
         }
 
+        const [userRecord] = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, user.id))
+          .limit(1);
+
+        if (!userRecord) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        // Don't send password hash
+        const { password, ...userWithoutPassword } = userRecord;
+        const response = { avatarConfig: await avatarService.getAvatarConfig(user.id), ...userWithoutPassword };
+
         // Generate JWT token
         const token = generateJWT(user.id);
 
         log(`[AUTH] Login successful: ${user.username}`);
         return res.json({
           message: "Login successful",
-          user: { id: user.id, username: user.username, avatar: user.avatar },
+          user: response,
           token,
         });
       },
@@ -193,7 +217,8 @@ export function setupAuth(app: Express) {
 
       // Don't send password hash
       const { password, ...userWithoutPassword } = user;
-      return res.json(userWithoutPassword);
+      const response = { avatarConfig: await avatarService.getAvatarConfig(user.id), ...userWithoutPassword };
+      return res.json(response);
     } catch (error) {
       log(`[AUTH] Error fetching user: ${error}`);
       res.status(500).json({ message: "Internal server error" });

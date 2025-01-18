@@ -106,6 +106,21 @@ export function useWebSocket(userId: number | undefined, token: string | null) {
                   queryKey: ["/api/channels", data.payload.channelId, "messages"],
                 });
               break;
+            case "message_deleted":
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.fromUserId],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/dm", data.payload.toUserId],
+              });
+              if (data.payload.channelId)
+                queryClient.invalidateQueries({
+                  queryKey: ["/api/channels", data.payload.channelId, "messages"],
+                });
+              queryClient.invalidateQueries({
+                queryKey: ["/api/channels/all"],
+              });
+              break;
             case "presence":
               queryClient.invalidateQueries({
                 queryKey: ["/api/users"],
