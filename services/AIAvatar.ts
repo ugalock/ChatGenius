@@ -314,7 +314,7 @@ export class AIAvatarService {
     } else if (searchFilter.channelId) {
       filter.channelId = { '$eq': `msg_${searchFilter.channelId}` };
     }
-    let k = searchFilter.fileTypes ? 500 : 100;
+    let k = searchFilter.fileTypes ? 150 : 100;
     if (searchFilter.fileTypes) {
       if (searchFilter.fileTypes.includes("message")) {
         if (searchFilter.fileTypes.length === 1) {
@@ -329,9 +329,16 @@ export class AIAvatarService {
       const fileTypes = searchFilter.fileTypes.filter((fileType) => fileType !== "message");
       if (fileTypes) {
         if (fileTypes.length === 1) {
-          filter.fileFormat = { '$eq': fileTypes[0] };
+          if (searchFilter.fileTypes.includes("message")) {
+            filter['$or'] = [{ type: { '$eq': 'message' } }, { fileFormat: { '$eq': fileTypes[0] } }];
+          } else {
+            filter.fileFormat = { '$eq': fileTypes[0] };
+          }
         } else {
           filter['$or'] = fileTypes.map((fileType) => ({ fileFormat: { '$eq': fileType } }));
+          if (searchFilter.fileTypes.includes("message")) {
+            filter['$or'].push({ type: { '$eq': 'message' } });
+          }
         }
       }
     }
@@ -349,7 +356,7 @@ export class AIAvatarService {
     // console.log(scoreLookup);
     // console.log(scoreLookup.size);
     const sortedIds = Array.from(scoreLookup.entries()).sort((a, b) => b[1] - a[1]).map(([id, _]) => id);
-    console.log(sortedIds);
+    console.log("sortedIds.length", sortedIds.length);
     for (const id of sortedIds.slice(0, 25)) {
       if (id.startsWith("msg_")) {
         msg_ids.push(parseInt(id.split("_")[1]));

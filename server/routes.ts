@@ -1455,7 +1455,7 @@ export function registerRoutes(app: Express): Server {
       const channelId = req.body.channelId ? req.body.channelId : null;
       const userId = req.body.userId ? req.body.userId : null;
       const searchOptions = req.body.searchOptions ? req.body.searchOptions : [];
-      // console.log("searchOptions", searchOptions);
+      console.log("searchOptions", searchOptions);
 
       if (searchOptions) {
         const { msg_ids, dm_ids } = await avatarService.search(query, {channelId, fromUserId: req.user!.id, toUserId: userId, fileTypes: searchOptions});
