@@ -84,8 +84,8 @@ async function processImageFile(filePath: string): Promise<string> {
     ]
   });
   const llm = new ChatOpenAI({
-    temperature: 0.7,
-    modelName: "gpt-4o",
+    temperature: 0.3,
+    modelName: "chatgpt-4o-latest",
   });
 
   const imageDescriptionAiMsg = await llm.invoke([message]);
@@ -140,8 +140,8 @@ export class AIAvatarService {
       dimensions: 3072,
     });
     this.llm = new ChatOpenAI({
-      temperature: 0.7,
-      modelName: "gpt-4o-mini",
+      temperature: 0.3,
+      modelName: "chatgpt-4o-latest",
     });
     this.index = this.pineconeClient.Index(this.indexName);
     this.vectorStore = null;
@@ -200,7 +200,7 @@ export class AIAvatarService {
     }
 
     const namespace = this.vectorStore!.pineconeIndex.namespace(optionsNamespace ?? "");
-
+    console.log(_filter);
     const results = await namespace.query({
       includeMetadata: true,
       topK: k,
@@ -312,7 +312,7 @@ export class AIAvatarService {
       const key = searchFilter.fromUserId > searchFilter.toUserId ? `dm_${searchFilter.toUserId}_${searchFilter.fromUserId}` : `dm_${searchFilter.fromUserId}_${searchFilter.toUserId}`;
       filter.channelId = { '$eq': key };
     } else if (searchFilter.channelId) {
-      filter.channelId = { '$eq': `msg_${searchFilter.channelId}` };
+      filter.channelId = { '$eq': `${searchFilter.channelId}` };
     }
     let k = searchFilter.fileTypes ? 150 : 100;
     if (searchFilter.fileTypes) {
